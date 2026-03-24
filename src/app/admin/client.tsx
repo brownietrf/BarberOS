@@ -3,7 +3,7 @@
 import { useState, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { cn } from '@/lib/utils'
-import { format, parseISO } from 'date-fns'
+import { format, subMonths } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 import {
   Search,
@@ -18,12 +18,26 @@ import {
   Clock,
   AlertTriangle,
   X,
+  TrendingUp,
+  Download,
 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { PLANS, trialDaysLeft, isTrialExpired } from '@/lib/plans'
 import { updatePlan, toggleActive } from './actions'
 import type { AdminBarbershop } from './page'
 import type { Plan } from '@/types/database'
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+} from 'recharts'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -40,6 +54,15 @@ const PLAN_BADGE: Record<Plan, string> = {
   premium: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
 }
 
+const MRR_PRO     = 49.9
+const MRR_PREMIUM = 89.9
+
+const PIE_COLORS = {
+  free:    '#71717a',
+  pro:     '#60a5fa',
+  premium: '#f59e0b',
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export function AdminClient({ barbershops: initial, adminEmail }: Props) {
@@ -54,18 +77,58 @@ export function AdminClient({ barbershops: initial, adminEmail }: Props) {
   const [saveError, setSaveError]     = useState('')
 
   // Edit form state
-  const [editPlan, setEditPlan]           = useState<Plan>('free')
+  const [editPlan, setEditPlan]               = useState<Plan>('free')
   const [editTrialEndsAt, setEditTrialEndsAt] = useState('')
-  const [editActive, setEditActive]       = useState(true)
+  const [editActive, setEditActive]           = useState(true)
 
   // ── Computed stats ──────────────────────────────────────────────────────
 
   const stats = useMemo(() => {
-    const total     = barbershops.length
-    const trials    = barbershops.filter(b => b.plan === 'free' && !isTrialExpired(b)).length
-    const expired   = barbershops.filter(b => isTrialExpired(b)).length
-    const paid      = barbershops.filter(b => b.plan !== 'free').length
-    return { total, trials, expired, paid }
+    const total          = barbershops.length
+    const trials         = barbershops.filter(b => b.plan === 'free' && !isTrialExpired(b)).length
+    const expired        = barbershops.filter(b => isTrialExpired(b)).length
+    const paid           = barbershops.filter(b => b.plan !== 'free').length
+    const proCount       = barbershops.filter(b => b.plan === 'pro').length
+    const premiumCount   = barbershops.filter(b => b.plan === 'premium').length
+    const mrr            = proCount * MRR_PRO + premiumCount * MRR_PREMIUM
+    const arr            = mrr * 12
+    const expiringTrials = barbershops.filter(b => {
+      if (b.plan !== 'free' || isTrialExpired(b)) return false
+      return trialDaysLeft(b) <= 7
+    }).length
+    return { total, trials, expired, paid, mrr, arr, expiringTrials }
+  }, [barbershops])
+
+  // ── Growth chart data (last 12 months) ──────────────────────────────────
+
+  const growthData = useMemo(() => {
+    const now = new Date()
+    const months = Array.from({ length: 12 }, (_, i) => {
+      const d = subMonths(now, 11 - i)
+      return {
+        month: format(d, 'MMM', { locale: ptBR }),
+        key:   format(d, 'yyyy-MM'),
+        count: 0,
+      }
+    })
+    barbershops.forEach(b => {
+      const key = b.created_at.slice(0, 7)
+      const m = months.find(m => m.key === key)
+      if (m) m.count++
+    })
+    return months
+  }, [barbershops])
+
+  // ── Plan mix chart data ──────────────────────────────────────────────────
+
+  const planMixData = useMemo(() => {
+    const counts = { free: 0, pro: 0, premium: 0 }
+    barbershops.forEach(b => { counts[b.plan]++ })
+    return [
+      { name: 'Free',    value: counts.free,    color: PIE_COLORS.free },
+      { name: 'Pro',     value: counts.pro,     color: PIE_COLORS.pro },
+      { name: 'Premium', value: counts.premium, color: PIE_COLORS.premium },
+    ].filter(d => d.value > 0)
   }, [barbershops])
 
   // ── Filtered list ───────────────────────────────────────────────────────
@@ -86,7 +149,7 @@ export function AdminClient({ barbershops: initial, adminEmail }: Props) {
   function openEdit(b: AdminBarbershop) {
     setEditTarget(b)
     setEditPlan(b.plan)
-    setEditTrialEndsAt(b.trial_ends_at.slice(0, 10)) // yyyy-MM-dd
+    setEditTrialEndsAt(b.trial_ends_at.slice(0, 10))
     setEditActive(b.is_active)
     setSaveError('')
   }
@@ -105,7 +168,6 @@ export function AdminClient({ barbershops: initial, adminEmail }: Props) {
       if (e2) { setSaveError(e2); setSaving(false); return }
     }
 
-    // Optimistic update
     setBarbershops(prev => prev.map(b =>
       b.id === editTarget.id
         ? { ...b, plan: editPlan, trial_ends_at: trialIso, is_active: editActive }
@@ -127,6 +189,30 @@ export function AdminClient({ barbershops: initial, adminEmail }: Props) {
   async function handleLogout() {
     await supabase.auth.signOut()
     router.push('/login')
+  }
+
+  function exportCSV() {
+    const bom    = '\ufeff'
+    const header = 'Nome;Slug;Email;Plano;Trial até;Ativa;Criada em'
+    const rows   = filtered.map(b => [
+      b.name,
+      b.slug,
+      b.owner_email,
+      PLANS[b.plan].label,
+      b.trial_ends_at.slice(0, 10),
+      b.is_active ? 'Sim' : 'Não',
+      b.created_at.slice(0, 10),
+    ].join(';'))
+    const csv  = bom + [header, ...rows].join('\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+    const url  = URL.createObjectURL(blob)
+    const a    = document.createElement('a')
+    a.href     = url
+    a.download = `barberos_${format(new Date(), 'yyyy-MM-dd')}.csv`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
 
   // ── Render ───────────────────────────────────────────────────────────────
@@ -174,19 +260,105 @@ export function AdminClient({ barbershops: initial, adminEmail }: Props) {
           <p className="text-zinc-400 text-sm mt-1">Gerenciamento de planos e acessos da plataforma</p>
         </div>
 
-        {/* Stats */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-          <StatCard icon={Scissors} iconBg="bg-zinc-700/50" iconColor="text-zinc-300"
-            label="Total de barbearias" value={stats.total} />
-          <StatCard icon={Clock} iconBg="bg-yellow-500/10" iconColor="text-yellow-400"
-            label="Em período de teste" value={stats.trials} />
-          <StatCard icon={AlertTriangle} iconBg="bg-red-500/10" iconColor="text-red-400"
-            label="Teste expirado" value={stats.expired} />
-          <StatCard icon={Users} iconBg="bg-green-500/10" iconColor="text-green-400"
-            label="Planos pagos" value={stats.paid} />
+        {/* Stats — 6 cards */}
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
+          <StatCard icon={Scissors}      iconBg="bg-zinc-700/50"    iconColor="text-zinc-300"
+            label="Total de barbearias"   value={stats.total} />
+          <StatCard icon={Clock}         iconBg="bg-yellow-500/10"  iconColor="text-yellow-400"
+            label="Em período de teste"   value={stats.trials} />
+          <StatCard icon={AlertTriangle} iconBg="bg-red-500/10"     iconColor="text-red-400"
+            label="Teste expirado"        value={stats.expired} />
+          <StatCard icon={Users}         iconBg="bg-green-500/10"   iconColor="text-green-400"
+            label="Planos pagos"          value={stats.paid} />
+          <StatCard icon={TrendingUp}    iconBg="bg-blue-500/10"    iconColor="text-blue-400"
+            label="MRR"                   value={stats.mrr}
+            displayValue={`R$ ${stats.mrr.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} />
+          <StatCard icon={TrendingUp}    iconBg="bg-purple-500/10"  iconColor="text-purple-400"
+            label="ARR"                   value={stats.arr}
+            displayValue={`R$ ${stats.arr.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} />
         </div>
 
-        {/* Filters */}
+        {/* Expiring trials alert */}
+        {stats.expiringTrials > 0 && (
+          <div className="flex items-center gap-3 bg-orange-500/10 border border-orange-500/20 rounded-xl px-4 py-3 mb-6 text-sm text-orange-300">
+            <AlertTriangle size={15} className="shrink-0" />
+            <span>
+              <strong>{stats.expiringTrials}</strong> barbearia{stats.expiringTrials !== 1 ? 's' : ''} com trial expirando em até 7 dias
+            </span>
+          </div>
+        )}
+
+        {/* Charts section */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-8">
+
+          {/* Growth by month */}
+          <div className="lg:col-span-2 bg-zinc-900 border border-zinc-800 rounded-xl p-5">
+            <h2 className="text-sm font-semibold text-white mb-4">Novas barbearias por mês</h2>
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={growthData} barSize={18}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+                <XAxis
+                  dataKey="month"
+                  tick={{ fill: '#71717a', fontSize: 11 }}
+                  axisLine={false}
+                  tickLine={false}
+                />
+                <YAxis
+                  allowDecimals={false}
+                  tick={{ fill: '#71717a', fontSize: 11 }}
+                  axisLine={false}
+                  tickLine={false}
+                  width={24}
+                />
+                <Tooltip content={<GrowthTooltip />} />
+                <Bar dataKey="count" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* Plan mix */}
+          <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
+            <h2 className="text-sm font-semibold text-white mb-4">Distribuição de planos</h2>
+            {planMixData.length === 0 ? (
+              <div className="flex items-center justify-center h-[200px] text-zinc-600 text-sm">Sem dados</div>
+            ) : (
+              <>
+                <ResponsiveContainer width="100%" height={160}>
+                  <PieChart>
+                    <Pie
+                      data={planMixData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={45}
+                      outerRadius={75}
+                      paddingAngle={3}
+                      dataKey="value"
+                    >
+                      {planMixData.map((entry, i) => (
+                        <Cell key={i} fill={entry.color} />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      contentStyle={{ background: '#18181b', border: '1px solid #3f3f46', borderRadius: 8 }}
+                      labelStyle={{ color: '#fff' }}
+                      itemStyle={{ color: '#a1a1aa' }}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="flex flex-wrap justify-center gap-3 mt-2">
+                  {planMixData.map(d => (
+                    <div key={d.name} className="flex items-center gap-1.5 text-xs text-zinc-400">
+                      <span className="w-2.5 h-2.5 rounded-full" style={{ background: d.color }} />
+                      {d.name} ({d.value})
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Filters + CSV export */}
         <div className="flex flex-col sm:flex-row gap-3 mb-4">
           <div className="relative flex-1">
             <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
@@ -197,19 +369,28 @@ export function AdminClient({ barbershops: initial, adminEmail }: Props) {
               className="w-full bg-zinc-900 border border-zinc-800 rounded-xl pl-9 pr-4 py-2.5 text-sm text-white placeholder:text-zinc-600 focus:border-amber-500 focus:outline-none"
             />
           </div>
-          <div className="flex bg-zinc-900 border border-zinc-800 rounded-xl p-1 gap-1">
-            {(['all', 'free', 'pro', 'premium'] as const).map(p => (
-              <button
-                key={p}
-                onClick={() => setPlanFilter(p)}
-                className={cn(
-                  'px-3 py-1.5 text-xs rounded-lg transition-all capitalize',
-                  planFilter === p ? 'bg-amber-500 text-black font-semibold' : 'text-zinc-400 hover:text-zinc-200'
-                )}
-              >
-                {p === 'all' ? 'Todos' : PLANS[p as Plan].label}
-              </button>
-            ))}
+          <div className="flex gap-2">
+            <div className="flex bg-zinc-900 border border-zinc-800 rounded-xl p-1 gap-1">
+              {(['all', 'free', 'pro', 'premium'] as const).map(p => (
+                <button
+                  key={p}
+                  onClick={() => setPlanFilter(p)}
+                  className={cn(
+                    'px-3 py-1.5 text-xs rounded-lg transition-all capitalize',
+                    planFilter === p ? 'bg-amber-500 text-black font-semibold' : 'text-zinc-400 hover:text-zinc-200'
+                  )}
+                >
+                  {p === 'all' ? 'Todos' : PLANS[p as Plan].label}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={exportCSV}
+              title="Exportar CSV"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-900 border border-zinc-800 hover:border-zinc-600 rounded-xl transition-colors"
+            >
+              <Download size={13} /> CSV
+            </button>
           </div>
         </div>
 
@@ -234,7 +415,7 @@ export function AdminClient({ barbershops: initial, adminEmail }: Props) {
               ) : (
                 <div className="divide-y divide-zinc-800">
                   {filtered.map(b => {
-                    const expired = isTrialExpired(b)
+                    const expired  = isTrialExpired(b)
                     const daysLeft = b.plan === 'free' && !expired ? trialDaysLeft(b) : null
 
                     return (
@@ -428,20 +609,37 @@ export function AdminClient({ barbershops: initial, adminEmail }: Props) {
 
 import type { LucideIcon } from 'lucide-react'
 
-function StatCard({ icon: Icon, iconBg, iconColor, label, value }: {
+function StatCard({ icon: Icon, iconBg, iconColor, label, value, displayValue }: {
   icon: LucideIcon
   iconBg: string
   iconColor: string
   label: string
   value: number
+  displayValue?: string
 }) {
   return (
     <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
       <div className={cn('w-9 h-9 rounded-lg flex items-center justify-center mb-4', iconBg)}>
         <Icon size={18} className={iconColor} />
       </div>
-      <div className="text-2xl font-bold text-white mb-1">{value}</div>
+      <div className="text-2xl font-bold text-white mb-1">{displayValue ?? value}</div>
       <div className="text-xs text-zinc-500">{label}</div>
+    </div>
+  )
+}
+
+// ─── GrowthTooltip ────────────────────────────────────────────────────────────
+
+function GrowthTooltip({ active, payload, label }: {
+  active?: boolean
+  payload?: { value: number }[]
+  label?: string
+}) {
+  if (!active || !payload?.length) return null
+  return (
+    <div className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs">
+      <p className="text-zinc-400 mb-0.5">{label}</p>
+      <p className="text-white font-semibold">{payload[0].value} barbearia{payload[0].value !== 1 ? 's' : ''}</p>
     </div>
   )
 }
