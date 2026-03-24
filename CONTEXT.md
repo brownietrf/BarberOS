@@ -9,6 +9,7 @@
 ## Estrutura de pastas relevante
 src/
   app/
+    book/[slug]/     → page.tsx (server) + client.tsx (public booking, sem auth)
     dashboard/
       agenda/        → page.tsx (server) + client.tsx (client)
       clientes/      → page.tsx (server) + client.tsx (client)
@@ -47,7 +48,7 @@ Functions: get_available_slots, upsert_customer, upsert_bot_session,
 
 ## Próximos passos (MVP)
 1. WhatsApp Bot (Evolution API no Railway)
-2. Página pública de agendamento (/[slug])
+2. ~~Página pública de agendamento (/book/[slug])~~ ✅ Implementado
 3. Deploy (Vercel + Railway)
 
 ## Padrão de código usado
