@@ -237,6 +237,8 @@ export function ClientesClient({ barbershopId, initialCustomers }: Props) {
           )}
           {filtered.length > 0 && (
             <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+              <div className="overflow-x-auto">
+              <div className="min-w-[580px]">
               {/* Header tabela */}
               <div className="grid grid-cols-[1fr_140px_100px_110px_80px] gap-4 px-5 py-3 border-b border-zinc-800 bg-zinc-800/30">
                 <button
@@ -328,6 +330,8 @@ export function ClientesClient({ barbershopId, initialCustomers }: Props) {
                     : `${filtered.length} de ${customers.length} clientes`
                   }
                 </p>
+              </div>
+              </div>
               </div>
             </div>
           )}
