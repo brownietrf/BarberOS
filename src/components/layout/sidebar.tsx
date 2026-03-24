@@ -12,7 +12,8 @@ import {
   LogOut,
   LayoutDashboard,
   Menu,
-  X
+  X,
+  BarChart2,
 } from 'lucide-react'
 import { useState } from 'react'
 
@@ -37,6 +38,11 @@ const navItems = [
     label: 'Serviços',
     href: '/dashboard/servicos',
     icon: Scissors,
+  },
+  {
+    label: 'Relatórios',
+    href: '/dashboard/relatorios',
+    icon: BarChart2,
   },
   {
     label: 'Configurações',
@@ -134,7 +140,7 @@ export function Sidebar({ barbershopName }: SidebarProps) {
 
       {/* Mobile top bar */}
       <div className="md:hidden fixed top-0 left-0 right-0 z-40 bg-zinc-900 border-b border-zinc-800 px-4 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-2">
+        <Link href="/dashboard" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
           <div className="w-7 h-7 bg-amber-500 rounded-lg flex items-center justify-center">
             <Scissors size={14} className="text-black" />
           </div>
@@ -142,7 +148,7 @@ export function Sidebar({ barbershopName }: SidebarProps) {
             <span className="text-sm font-bold text-white">Barber</span>
             <span className="text-sm font-bold text-amber-500">OS</span>
           </div>
-        </div>
+        </Link>
         <button
           onClick={() => setMobileOpen(!mobileOpen)}
           className="text-zinc-400 hover:text-white transition-colors"

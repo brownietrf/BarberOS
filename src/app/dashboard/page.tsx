@@ -1,6 +1,8 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
-import { CalendarDays, Users, Scissors, TrendingUp } from 'lucide-react'
+import { CalendarDays, Users, Scissors, TrendingUp, Clock, Zap, Crown, AlertTriangle } from 'lucide-react'
+import { isTrialActive, isTrialExpired, trialDaysLeft, PLANS } from '@/lib/plans'
+import type { Plan } from '@/types/database'
 
 export default async function DashboardPage() {
   const supabase = await createClient()
@@ -86,15 +88,15 @@ export default async function DashboardPage() {
     },
   ]
 
-  // Trial
-  const trialEnds = new Date(barbershop.trial_ends_at)
-  const trialDays = Math.max(0, Math.ceil((trialEnds.getTime() - Date.now()) / (1000 * 60 * 60 * 24)))
+  const daysLeft    = trialDaysLeft(barbershop)
+  const trialActive = isTrialActive(barbershop)
+  const trialExpd   = isTrialExpired(barbershop)
 
   return (
     <div className="max-w-5xl mx-auto">
 
       {/* Header */}
-      <div className="mb-8">
+      <div className="mb-6">
         <h1 className="text-2xl font-bold text-white">
           Olá! 👋
         </h1>
@@ -103,22 +105,8 @@ export default async function DashboardPage() {
         </p>
       </div>
 
-      {/* Trial banner */}
-      {barbershop.plan === 'free' && trialDays > 0 && (
-        <div className="mb-6 bg-amber-500/5 border border-amber-500/20 rounded-xl px-5 py-4 flex items-center justify-between gap-4 flex-wrap">
-          <div>
-            <p className="text-amber-400 text-sm font-medium">
-              🎉 Período de teste gratuito
-            </p>
-            <p className="text-zinc-400 text-xs mt-0.5">
-              Você tem <strong className="text-amber-400">{trialDays} dias</strong> restantes no plano gratuito.
-            </p>
-          </div>
-          <button className="text-xs bg-amber-500 hover:bg-amber-400 text-black font-semibold px-4 py-2 rounded-lg transition-colors whitespace-nowrap">
-            Ver planos
-          </button>
-        </div>
-      )}
+      {/* Plan status banner */}
+      <PlanBanner plan={barbershop.plan as Plan} trialActive={trialActive} trialExpired={trialExpd} daysLeft={daysLeft} />
 
       {/* Stats grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
@@ -191,6 +179,75 @@ export default async function DashboardPage() {
         </div>
       )}
 
+    </div>
+  )
+}
+
+// ─── Plan Banner ──────────────────────────────────────────────────────────────
+
+function PlanBanner({ plan, trialActive, trialExpired, daysLeft }: {
+  plan: Plan
+  trialActive: boolean
+  trialExpired: boolean
+  daysLeft: number
+}) {
+  const def = PLANS[plan]
+
+  // Free trial — urgência
+  if (plan === 'free') {
+    const urgent  = daysLeft <= 3
+    const warning = daysLeft <= 7
+    const color   = urgent ? 'border-red-500/25 bg-red-500/5' : warning ? 'border-orange-500/25 bg-orange-500/5' : 'border-amber-500/20 bg-amber-500/5'
+    const textColor = urgent ? 'text-red-400' : warning ? 'text-orange-400' : 'text-amber-400'
+    const Icon = Clock
+
+    return (
+      <div className={`mb-6 border rounded-xl px-5 py-4 flex items-center justify-between gap-4 flex-wrap ${color}`}>
+        <div className="flex items-center gap-3">
+          <Icon size={16} className={textColor} />
+          <div>
+            <p className={`text-sm font-medium ${textColor}`}>
+              {trialExpired
+                ? 'Período de teste encerrado'
+                : urgent
+                  ? `Trial expira em ${daysLeft} dia${daysLeft !== 1 ? 's' : ''}!`
+                  : `Free Trial — ${daysLeft} dias restantes`
+              }
+            </p>
+            <p className="text-zinc-500 text-xs mt-0.5">
+              {trialExpired
+                ? 'Assine um plano para continuar utilizando o BarberOS.'
+                : 'Você tem acesso completo durante o período de teste.'}
+            </p>
+          </div>
+        </div>
+        <a href="/dashboard/planos" className="text-xs bg-amber-500 hover:bg-amber-400 text-black font-semibold px-4 py-2 rounded-lg transition-colors whitespace-nowrap">
+          Ver planos
+        </a>
+      </div>
+    )
+  }
+
+  // Plano pago
+  const Icon = plan === 'premium' ? Crown : Zap
+  const iconColor = plan === 'premium' ? 'text-amber-400' : 'text-blue-400'
+  const badgeColor = plan === 'premium' ? 'bg-amber-500/10 border-amber-500/20' : 'bg-blue-500/10 border-blue-500/20'
+
+  return (
+    <div className="mb-6 bg-zinc-900 border border-zinc-800 rounded-xl px-5 py-3.5 flex items-center justify-between gap-4 flex-wrap">
+      <div className="flex items-center gap-3">
+        <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${badgeColor} border`}>
+          <Icon size={14} className={iconColor} />
+        </div>
+        <div>
+          <p className="text-sm text-zinc-300">
+            Plano <strong className={iconColor}>{def.label}</strong> — {def.price} {def.priceNote}
+          </p>
+        </div>
+      </div>
+      <a href="/dashboard/planos" className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors whitespace-nowrap underline underline-offset-2">
+        Ver planos
+      </a>
     </div>
   )
 }

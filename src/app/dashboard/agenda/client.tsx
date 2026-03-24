@@ -436,6 +436,8 @@ export function AgendaClient({ barbershop, initialAppointments, initialBlockedSl
       {/* WEEK VIEW */}
       {view === 'week' && (
         <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+          <div className="overflow-x-auto">
+          <div className="min-w-[560px]">
           <div className="grid grid-cols-[60px_repeat(7,1fr)] border-b border-zinc-800">
             <div className="p-2" />
             {weekDays.map(day => (
@@ -473,6 +475,8 @@ export function AgendaClient({ barbershop, initialAppointments, initialBlockedSl
                 })}
               </div>
             ))}
+          </div>
+          </div>
           </div>
         </div>
       )}

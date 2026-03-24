@@ -12,6 +12,7 @@
 NEXT_PUBLIC_SUPABASE_URL=https://xxxx.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJ...        # exposta no browser, protegida por RLS
 SUPABASE_SERVICE_ROLE_KEY=eyJ...            # apenas server-side, nunca expor no client
+ADMIN_EMAIL=admin@example.com               # e-mail do administrador da plataforma
 ```
 
 ---
@@ -201,7 +202,7 @@ SECURITY DEFINER
 
 - Lê `working_hours` da barbearia para o dia da semana informado
 - Converte horários locais → UTC via `timezone(p_timezone, ...)`
-- Marca `available = false` se houver `appointments` (pending/confirmed) ou `blocked_slots` sobrepostos, ou se o slot já passou (`v_current_slot > now()`)
+- Marca `available = false` se houver `appointments` (pending/confirmed) ou `blocked_slots` sobrepostos, ou se o slot já passou
 - **Retorna TODOS os slots** (disponíveis e indisponíveis) — filtrar no client
 
 **Uso no client:**
@@ -218,7 +219,7 @@ const available = (data as { slot_time: string; available: boolean }[])
 
 ---
 
-### Outras funções (pendentes de implementação/uso)
+### Outras funções
 | Função | Uso previsto |
 |---|---|
 | `upsert_customer` | Cria ou retorna cliente por telefone |
@@ -304,11 +305,21 @@ const { data } = await supabase
   .lte('start_time', endOfDay.toISOString())
   .order('start_time', { ascending: true })
 
-// Upsert de cliente no Book (anon)
-const { data: existing } = await supabase
-  .from('customers')
-  .select('id')
-  .eq('barbershop_id', barbershopId)
-  .eq('phone', rawPhone)          // apenas dígitos
-  .maybeSingle()
+// Relatórios — período baseado no plano
+const defaultPeriod = PLANS[barbershop.plan].reportPeriods[0]  // '7d' para pro
+const start = subDays(new Date(), defaultPeriod === '7d' ? 7 : 30)
+const { data } = await supabase
+  .from('appointments_full')
+  .select('id, start_time, status, source, customer_name, service_name, service_price')
+  .eq('barbershop_id', id)
+  .gte('start_time', start.toISOString())
+
+// Admin — buscar todas as barbearias (service role, sem RLS)
+const { data } = await adminClient
+  .from('barbershops')
+  .select('id, name, slug, owner_id, plan, trial_ends_at, is_active, created_at')
+  .order('created_at', { ascending: false })
+
+// Admin — listar todos os usuários
+const { data: { users } } = await adminClient.auth.admin.listUsers({ perPage: 1000 })
 ```
