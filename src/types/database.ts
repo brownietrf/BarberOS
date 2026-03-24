@@ -97,6 +97,14 @@ export interface WhatsappInstance {
   updated_at: string
 }
 
+export interface AppointmentFull extends Omit<Appointment, 'customer' | 'service'> {
+  customer_name: string | null
+  customer_phone: string | null
+  service_name: string | null
+  service_duration: number | null
+  service_price: number | null
+}
+
 export interface BotSession {
   id: string
   barbershop_id: string

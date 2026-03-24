@@ -10,25 +10,29 @@
 ```
 src/
   app/
-    book/[slug]/     → page.tsx (server) + client.tsx (agendamento público, sem auth)
+    admin/                → page.tsx (server) + client.tsx + actions.ts (painel admin)
+    book/[slug]/          → page.tsx (server) + client.tsx (agendamento público, sem auth)
     dashboard/
-      agenda/        → page.tsx (server) + client.tsx (client)
-      clientes/      → page.tsx (server) + client.tsx (client)
-      configuracoes/ → page.tsx (server) + client.tsx (client)
-      servicos/      → page.tsx (server) + client.tsx (client)
-      layout.tsx     → sidebar + proteção de rota
-      page.tsx       → visão geral com stats
-    login/           → page.tsx (auth completo)
-    onboarding/      → page.tsx (3 steps)
-    reset-password/  → page.tsx
+      agenda/             → page.tsx (server) + client.tsx
+      clientes/           → page.tsx (server) + client.tsx
+      configuracoes/      → page.tsx (server) + client.tsx
+      planos/             → page.tsx (server) + client.tsx (comparação de planos)
+      relatorios/         → page.tsx (server) + client.tsx (analytics com gate de plano)
+      servicos/           → page.tsx (server) + client.tsx
+      layout.tsx          → sidebar + proteção de rota
+      page.tsx            → visão geral com stats + banner do plano
+    login/                → page.tsx (auth completo)
+    onboarding/           → page.tsx (3 steps)
+    reset-password/       → page.tsx
   components/
-    layout/sidebar.tsx
+    layout/sidebar.tsx    → desktop sidebar + mobile drawer (logo é link para /dashboard)
     ui/modal.tsx
   lib/
     supabase/client.ts + server.ts + admin.ts
+    plans.ts              → definição dos planos, features, helpers (isTrialActive etc.)
     utils.ts (cn)
-  types/database.ts
-  middleware.ts
+  types/database.ts       → inclui AppointmentFull
+  middleware.ts           → protege /dashboard/*, /onboarding/*, /admin/*
 ```
 
 ## Banco de dados (Supabase — sa-east-1)
@@ -42,14 +46,31 @@ Functions: get_available_slots (única versão — não criar overloads!),
 ## O que está pronto
 - Auth completo (login, cadastro, recuperação de senha, templates de e-mail)
 - Onboarding (3 steps)
-- Layout do painel com sidebar responsiva
-- Visão geral com stats
+- Layout do painel com sidebar responsiva (mobile: logo clicável → /dashboard)
+- Visão geral com stats + banner do plano atual com botão "Ver planos"
 - Serviços (CRUD, categorias múltiplas, filtros, detecção de duplicatas)
 - Clientes (tabela, busca, perfil, máscara de telefone, VIP)
 - Configurações (dados da barbearia, preview do bot, horários, link do Book com compartilhamento)
 - Agenda (dia/semana/mês, criar/editar/cancelar agendamentos, bloqueio de horários)
 - Agenda visão dia ordenada por horário (agendamentos + bloqueios mesclados)
 - BarberOS Book (/book/[slug]) — agendamento público em 4 etapas, slots sincronizados
+- Relatórios (/dashboard/relatorios) — cards, gráficos, insights, filtro por período, gate por plano
+- Planos (/dashboard/planos) — tabela comparativa, banner de status, texto de vantagens dinâmico
+- Painel Admin (/admin) — gestão de planos/trial/ativo por barbearia, server actions com service role
+- Sistema de planos (lib/plans.ts) — free trial / pro / premium com feature gates
+
+## Planos
+- free  → trial por período definido pelo admin, acesso 100%, chatbot conforme admin
+- pro   → R$ 49,90/mês, clientes ilimitados, relatórios 7d básico, chatbot básico
+- premium → R$ 89,90/mês, relatórios completos (7d/30d/90d/12m) com insights, chatbot completo
+
+## Variáveis de ambiente necessárias
+```env
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=   # server-side/admin apenas
+ADMIN_EMAIL=                 # e-mail do administrador da plataforma
+```
 
 ## Próximos passos (MVP)
 1. WhatsApp Bot (Evolution API no Railway)
@@ -61,6 +82,7 @@ Functions: get_available_slots (única versão — não criar overloads!),
 - Sempre usar o padrão page.tsx (server) + client.tsx (client)
 - Supabase client: createClient() do @/lib/supabase/client
 - Supabase server: await createClient() do @/lib/supabase/server
+- Mutations admin: server actions em actions.ts usando adminClient (service role)
 
 ## Documentação detalhada
 - ARCHITECTURE.md → padrões, convenções, tipos, componentes, fluxo de auth

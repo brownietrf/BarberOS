@@ -24,42 +24,55 @@
 ```
 src/
 ├── app/
-│   ├── book/[slug]/            # Público — página de agendamento do cliente
-│   │   ├── page.tsx            # Server: busca barbershop + services pelo slug
-│   │   └── client.tsx          # Client: fluxo 4 etapas (serviço→data→dados→ok)
+│   ├── admin/                      # Painel administrativo (acesso via ADMIN_EMAIL)
+│   │   ├── page.tsx                # Server: verifica admin + busca todas as barbearias
+│   │   ├── client.tsx              # Client: tabela de usuários, modais, toggles
+│   │   └── actions.ts              # Server Actions: updatePlan, toggleActive (adminClient)
+│   ├── book/[slug]/                # Público — página de agendamento do cliente
+│   │   ├── page.tsx                # Server: busca barbershop + services pelo slug
+│   │   └── client.tsx              # Client: fluxo 4 etapas (serviço→data→dados→ok)
 │   ├── dashboard/
-│   │   ├── layout.tsx          # Server: auth guard + passa barbershop à sidebar
-│   │   ├── page.tsx            # Server: stats do dia
+│   │   ├── layout.tsx              # Server: auth guard + passa barbershop à sidebar
+│   │   ├── page.tsx                # Server: stats do dia + banner do plano
 │   │   ├── agenda/
-│   │   │   ├── page.tsx        # Server: appointments_full + blocked_slots + services + customers
-│   │   │   └── client.tsx      # Client: agenda dia/semana/mês, CRUD completo
+│   │   │   ├── page.tsx            # Server: appointments_full + blocked_slots + services + customers
+│   │   │   └── client.tsx          # Client: agenda dia/semana/mês, CRUD completo
 │   │   ├── clientes/
-│   │   │   ├── page.tsx        # Server: customers ordenados por last_visit_at
-│   │   │   └── client.tsx      # Client: tabela, busca, sort, CRUD
+│   │   │   ├── page.tsx            # Server: customers ordenados por last_visit_at
+│   │   │   └── client.tsx          # Client: tabela, busca, sort, CRUD
+│   │   ├── planos/
+│   │   │   ├── page.tsx            # Server: busca barbershop
+│   │   │   └── client.tsx          # Client: tabela comparativa, banner status, texto vantagens
+│   │   ├── relatorios/
+│   │   │   ├── page.tsx            # Server: busca appointments_full (período pelo plano)
+│   │   │   └── client.tsx          # Client: cards, gráficos, insights, gate de plano (blur)
 │   │   ├── servicos/
-│   │   │   ├── page.tsx        # Server: services por display_order
-│   │   │   └── client.tsx      # Client: CRUD, múltiplas categorias, duplicatas
+│   │   │   ├── page.tsx            # Server: services por display_order
+│   │   │   └── client.tsx          # Client: CRUD, múltiplas categorias, duplicatas
 │   │   └── configuracoes/
-│   │       ├── page.tsx        # Server: barbershop completo + user email
-│   │       └── client.tsx      # Client: dados gerais, horários, link do Book
-│   ├── login/page.tsx          # Client: login | cadastro | recuperar senha
-│   ├── onboarding/page.tsx     # Client: wizard 3 passos (cria barbearia)
-│   ├── reset-password/page.tsx # Client: troca de senha via token
-│   ├── layout.tsx              # Root layout (fontes Inter + Geist)
-│   ├── page.tsx                # Redirect → /login
-│   └── globals.css             # Tailwind + .input-base utility class
+│   │       ├── page.tsx            # Server: barbershop completo + user email
+│   │       └── client.tsx          # Client: dados gerais, horários, link do Book
+│   ├── login/page.tsx              # Client: login | cadastro | recuperar senha
+│   ├── onboarding/page.tsx         # Client: wizard 3 passos (cria barbearia)
+│   ├── reset-password/page.tsx     # Client: troca de senha via token
+│   ├── layout.tsx                  # Root layout (fontes Inter + Geist)
+│   ├── page.tsx                    # Redirect → /login
+│   └── globals.css                 # Tailwind + .input-base + html { overflow-x: hidden }
 ├── components/
-│   ├── layout/sidebar.tsx      # Nav: desktop sidebar fixo + mobile drawer
-│   └── ui/modal.tsx            # Modal: backdrop blur, escape, scroll lock, size sm|md
+│   ├── layout/sidebar.tsx          # Nav: desktop sidebar fixo + mobile drawer
+│   │                               # Logo mobile é <Link href="/dashboard">
+│   └── ui/modal.tsx                # Modal: backdrop blur, escape, scroll lock, size sm|md
 ├── lib/
 │   ├── supabase/
-│   │   ├── client.ts           # createClient() — browser (usa cookies via @supabase/ssr)
-│   │   ├── server.ts           # createClient() async — server (lê cookies do Next.js)
-│   │   └── admin.ts            # adminClient — service_role, sem RLS
-│   └── utils.ts                # cn(…) = clsx + tailwind-merge
+│   │   ├── client.ts               # createClient() — browser (usa cookies via @supabase/ssr)
+│   │   ├── server.ts               # createClient() async — server (lê cookies do Next.js)
+│   │   └── admin.ts                # adminClient — service_role, sem RLS
+│   ├── plans.ts                    # Definição dos planos + helpers de trial
+│   └── utils.ts                    # cn(…) = clsx + tailwind-merge
 ├── types/
-│   └── database.ts             # Todos os types: Barbershop, Service, Customer, Appointment…
-└── middleware.ts               # Proteção: /dashboard/*, /onboarding/* exigem auth
+│   └── database.ts                 # Todos os types: Barbershop, Service, Customer,
+│                                   # Appointment, AppointmentFull, WhatsappInstance…
+└── middleware.ts                   # Proteção: /dashboard/*, /onboarding/*, /admin/*
 ```
 
 ---
@@ -76,7 +89,6 @@ dashboard/modulo/
 
 ### page.tsx (Server)
 ```typescript
-// Sempre async, sempre server
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import ModuloClient from './client'
@@ -126,9 +138,62 @@ export function ModuloClient({ barbershop, initialItems }: Props) {
       .single()
     if (novo) setItems(prev => [...prev, novo])
   }
-  // ...
 }
 ```
+
+### actions.ts (Server Actions — admin)
+Usado apenas no painel `/admin`. Mutations privilegiadas que precisam bypassar RLS:
+```typescript
+'use server'
+import { createClient } from '@/lib/supabase/server'
+import { adminClient } from '@/lib/supabase/admin'
+import { revalidatePath } from 'next/cache'
+
+async function verifyAdmin() {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user || user.email !== process.env.ADMIN_EMAIL) throw new Error('Unauthorized')
+}
+
+export async function updatePlan(id: string, plan: string, trialEndsAt: string) {
+  await verifyAdmin()
+  await adminClient.from('barbershops').update({ plan, trial_ends_at: trialEndsAt }).eq('id', id)
+  revalidatePath('/admin')
+}
+```
+
+---
+
+## Sistema de Planos (`src/lib/plans.ts`)
+
+```typescript
+// Planos disponíveis
+PLANS: Record<Plan, PlanDef>
+  free    → trial por período do admin, acesso 100%, chatbot conforme admin
+  pro     → R$ 49,90/mês, relatórios 7d básico (sem insights/gráficos), chatbot básico
+  premium → R$ 89,90/mês, relatórios completos com insights, chatbot completo
+
+// Helpers
+isTrialActive(b)   → boolean (free + trial_ends_at no futuro)
+isTrialExpired(b)  → boolean (free + trial_ends_at no passado)
+trialDaysLeft(b)   → number  (dias restantes, mínimo 0)
+```
+
+### Gate de plano nos Relatórios
+- **free**: acesso completo (período inicial conforme `reportPeriods[0]`)
+- **pro**: apenas 7d, insights e gráficos visíveis mas com overlay `backdrop-blur + "Recurso Premium"`
+- **premium**: acesso completo
+
+O período inicial é calculado no server (`page.tsx`) com base em `PLANS[plan].reportPeriods[0]` para evitar flash de dados incorretos no client.
+
+---
+
+## Painel Admin (`/admin`)
+
+- Acesso: apenas usuário com email == `process.env.ADMIN_EMAIL`
+- Middleware bloqueia sem auth; verificação de email ocorre no server component
+- Mutations via Server Actions + `adminClient` (service role) — SERVICE_ROLE_KEY nunca vai ao browser
+- Funcionalidades: stats globais, busca/filtro por plano, toggle ativo/inativo, edição de plano + trial
 
 ---
 
@@ -144,12 +209,15 @@ dashboard/layout.tsx → getUser() → sem barbershop = redirect /onboarding
 /onboarding → cria barbershop com slug único → redirect /dashboard
 
 /reset-password → exchangeCodeForSession(code) → updateUser({ password })
+
+/admin/* → middleware verifica session → sem auth = redirect /login
+         → page.tsx verifica email == ADMIN_EMAIL → senão redirect /dashboard
 ```
 
 ### Middleware (`src/middleware.ts`)
-- Roda em: `/dashboard/:path*`, `/onboarding/:path*`, `/login`, `/reset-password`
+- Rota no matcher: `/dashboard/:path*`, `/onboarding/:path*`, `/admin/:path*`, `/login`, `/reset-password`
 - Lógica: sem user → redirect `/login`; user em `/login` → redirect `/dashboard`
-- Rotas públicas (não no matcher): `/`, `/book/:slug*`
+- Rotas públicas (fora do matcher): `/`, `/book/:slug*`
 
 ---
 
@@ -157,30 +225,33 @@ dashboard/layout.tsx → getUser() → sem barbershop = redirect /onboarding
 
 O Supabase usa Row-Level Security. Padrão para recursos do barbeiro:
 ```sql
--- Dono acessa apenas os próprios dados
 USING (barbershop_id IN (
   SELECT id FROM barbershops WHERE owner_id = auth.uid()
 ))
 ```
 
-Rotas públicas (`/book/[slug]`) usam a chave `anon` e dependem de policies explícitas para leitura de `barbershops`, `services`, e inserção em `customers` e `appointments`.
+Rotas públicas (`/book/[slug]`) usam a chave `anon` e dependem de policies explícitas.
+Painel admin usa `adminClient` (service_role) que bypassa RLS completamente.
 
 ---
 
 ## Rotas
 
-| Rota | Auth | Server busca | Descrição |
-|---|---|---|---|
-| `/` | — | — | Redirect → /login |
-| `/login` | Público | — | Auth completo |
-| `/onboarding` | Autenticado | — | Cria barbearia |
-| `/reset-password` | Público | — | Troca senha |
-| `/book/[slug]` | **Público** | barbershop + services | Booking do cliente |
-| `/dashboard` | Autenticado | stats do dia | Visão geral |
-| `/dashboard/agenda` | Autenticado | appointments + blocked_slots + services + customers | Agenda |
-| `/dashboard/clientes` | Autenticado | customers | Gestão de clientes |
-| `/dashboard/servicos` | Autenticado | services | Catálogo |
-| `/dashboard/configuracoes` | Autenticado | barbershop + user | Configurações |
+| Rota | Auth | Descrição |
+|---|---|---|
+| `/` | — | Redirect → /login |
+| `/login` | Público | Auth completo |
+| `/onboarding` | Autenticado | Cria barbearia |
+| `/reset-password` | Público | Troca senha |
+| `/book/[slug]` | **Público** | Booking do cliente |
+| `/dashboard` | Autenticado | Visão geral + banner de plano |
+| `/dashboard/agenda` | Autenticado | Agenda |
+| `/dashboard/clientes` | Autenticado | Gestão de clientes |
+| `/dashboard/servicos` | Autenticado | Catálogo |
+| `/dashboard/configuracoes` | Autenticado | Configurações |
+| `/dashboard/relatorios` | Autenticado | Analytics (gateado por plano) |
+| `/dashboard/planos` | Autenticado | Tabela comparativa de planos |
+| `/admin` | Admin only | Gestão de usuários e planos |
 
 ---
 
@@ -199,6 +270,10 @@ Input padrão: .input-base (definido em globals.css)
   → bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3
      text-white placeholder:text-zinc-600
      focus:border-amber-500 focus:outline-none
+
+Overflow mobile: html { overflow-x: hidden } em globals.css
+                 main do dashboard com overflow-x-hidden
+                 tabelas largas com overflow-x-auto + min-w-[Npx]
 ```
 
 ---
@@ -231,8 +306,12 @@ interface Customer   { id, barbershop_id, name, phone, notes,
 
 interface Appointment { id, barbershop_id, customer_id, service_id,
                         start_time, end_time, status, source, notes,
-                        reminder_sent, confirmed_at, cancelled_at, cancel_reason,
-                        customer?: Customer, service?: Service, ... }
+                        reminder_sent, confirmed_at, cancelled_at, cancel_reason, ... }
+
+// View appointments_full (extends Appointment)
+interface AppointmentFull extends Appointment {
+  customer_name, customer_phone, service_name, service_duration, service_price
+}
 ```
 
 ---
@@ -251,32 +330,12 @@ Fecha com: clique no backdrop, tecla Escape. Bloqueia scroll do body.
 - Props: `barbershopName: string`
 - Desktop: sidebar fixa à esquerda (w-56)
 - Mobile: botão hambúrguer + drawer com overlay
+- Logo mobile: `<Link href="/dashboard">` (clicável para voltar ao início)
+- Nav items: Visão Geral, Agenda, Clientes, Serviços, Relatórios, Configurações
 - Logout via `supabase.auth.signOut()`
 
 ### `.input-base` (globals.css)
 Classe Tailwind para todos os inputs/textareas do projeto.
-
----
-
-## Utilitários Recorrentes
-
-```typescript
-// cn() — merge de classes Tailwind
-import { cn } from '@/lib/utils'
-cn('base-class', condition && 'conditional', { 'object-syntax': true })
-
-// Formatação de datas (date-fns + ptBR)
-format(date, "dd 'de' MMMM", { locale: ptBR })
-format(parseISO(isoString), 'HH:mm')
-
-// Telefone (em clientes/book)
-maskPhone(v)      // formata input enquanto digita: (11) 99999-9999
-normalizePhone(v) // remove não-dígitos
-isValidPhone(v)   // valida 10-11 dígitos
-
-// Preço
-price.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
-```
 
 ---
 
@@ -286,12 +345,17 @@ price.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 |---|---|---|
 | Auth (login/cadastro/recuperação) | ✅ | Templates de e-mail configurados |
 | Onboarding 3 passos | ✅ | Cria barbershop com slug único |
-| Dashboard overview | ✅ | Stats do dia em tempo real |
+| Dashboard overview | ✅ | Stats do dia + banner de plano |
 | Agenda (dia/semana/mês) | ✅ | CRUD + bloqueios, ordenado por horário |
 | Clientes | ✅ | CRUD + VIP + busca + sort |
 | Serviços | ✅ | CRUD + categorias múltiplas + duplicatas |
 | Configurações | ✅ | Dados gerais + horários + link do Book |
 | BarberOS Book (`/book/[slug]`) | ✅ | Agendamento público em 4 etapas |
+| Relatórios | ✅ | Cards + gráficos + insights + gate por plano |
+| Planos (`/dashboard/planos`) | ✅ | Tabela comparativa + texto dinâmico |
+| Sistema de planos (`lib/plans.ts`) | ✅ | free/pro/premium com feature gates |
+| Painel Admin (`/admin`) | ✅ | Gestão de planos/trial via server actions |
+| Mobile overflow fix | ✅ | html overflow-x hidden + wrappers nas tabelas |
 
 ## O que falta (MVP)
 

@@ -12,7 +12,8 @@ import {
   LogOut,
   LayoutDashboard,
   Menu,
-  X
+  X,
+  BarChart2,
 } from 'lucide-react'
 import { useState } from 'react'
 
@@ -37,6 +38,11 @@ const navItems = [
     label: 'Serviços',
     href: '/dashboard/servicos',
     icon: Scissors,
+  },
+  {
+    label: 'Relatórios',
+    href: '/dashboard/relatorios',
+    icon: BarChart2,
   },
   {
     label: 'Configurações',
