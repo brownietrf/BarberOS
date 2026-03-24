@@ -10,7 +10,6 @@ import {
   Scissors,
   Settings,
   LogOut,
-  MessageSquare,
   LayoutDashboard,
   Menu,
   X
@@ -40,11 +39,6 @@ const navItems = [
     icon: Scissors,
   },
   {
-    label: 'WhatsApp Bot',
-    href: '/dashboard/bot',
-    icon: MessageSquare,
-  },
-  {
     label: 'Configurações',
     href: '/dashboard/configuracoes',
     icon: Settings,
@@ -53,10 +47,9 @@ const navItems = [
 
 interface SidebarProps {
   barbershopName: string
-  botName: string
 }
 
-export function Sidebar({ barbershopName, botName }: SidebarProps) {
+export function Sidebar({ barbershopName }: SidebarProps) {
   const pathname = usePathname()
   const router = useRouter()
   const supabase = createClient()
@@ -117,15 +110,6 @@ export function Sidebar({ barbershopName, botName }: SidebarProps) {
           )
         })}
       </nav>
-
-      {/* Bot status */}
-      <div className="mx-3 mb-3 px-3 py-3 bg-zinc-800/50 border border-zinc-700 rounded-lg">
-        <div className="flex items-center gap-2 mb-1">
-          <div className="w-2 h-2 rounded-full bg-zinc-600 animate-pulse" />
-          <span className="text-xs text-zinc-400 font-medium">{botName}</span>
-        </div>
-        <p className="text-xs text-zinc-600">Bot desconectado</p>
-      </div>
 
       {/* Logout */}
       <div className="px-3 pb-4 border-t border-zinc-800 pt-3">
