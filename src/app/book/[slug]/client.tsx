@@ -112,11 +112,12 @@ export default function BookClient({ barbershop, services }: BookClientProps) {
         p_duration_min: selectedService.duration_min,
       })
       if (error) throw error
-      // normalize: result may be string[] or { slot_time: string }[]
-      const raw = (data ?? []) as unknown[]
-      const normalized = raw.map((r) =>
-        typeof r === 'string' ? r : (r as Record<string, string>).slot_time ?? ''
-      ).filter(Boolean)
+      // função retorna { slot_time, available } — filtrar apenas os disponíveis
+      type SlotRow = { slot_time: string; available: boolean }
+      const normalized = ((data ?? []) as SlotRow[])
+        .filter((r) => r.available === true)
+        .map((r) => r.slot_time)
+        .filter(Boolean)
       setSlots(normalized)
     } catch {
       setSlots([])
