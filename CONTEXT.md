@@ -2,14 +2,15 @@
 
 ## Stack
 - Next.js 15 + TypeScript + Tailwind CSS
-- Supabase (banco PostgreSQL + auth + RLS)
+- Supabase (PostgreSQL + Auth + RLS) — região sa-east-1
 - date-fns para datas
 - lucide-react para ícones
 
 ## Estrutura de pastas relevante
+```
 src/
   app/
-    book/[slug]/     → page.tsx (server) + client.tsx (public booking, sem auth)
+    book/[slug]/     → page.tsx (server) + client.tsx (agendamento público, sem auth)
     dashboard/
       agenda/        → page.tsx (server) + client.tsx (client)
       clientes/      → page.tsx (server) + client.tsx (client)
@@ -28,12 +29,14 @@ src/
     utils.ts (cn)
   types/database.ts
   middleware.ts
+```
 
-## Banco de dados (Supabase — projeto BarberOS, sa-east-1)
+## Banco de dados (Supabase — sa-east-1)
 Tabelas: barbershops, services, customers, appointments,
          blocked_slots, bot_sessions, whatsapp_instances
-View: appointments_full (join com customers e services)
-Functions: get_available_slots, upsert_customer, upsert_bot_session,
+View: appointments_full (join com customers e services — SELECT público)
+Functions: get_available_slots (única versão — não criar overloads!),
+           upsert_customer, upsert_bot_session,
            get_pending_reminders, handle_appointment_completed, cleanup_old_sessions
 
 ## O que está pronto
@@ -43,18 +46,24 @@ Functions: get_available_slots, upsert_customer, upsert_bot_session,
 - Visão geral com stats
 - Serviços (CRUD, categorias múltiplas, filtros, detecção de duplicatas)
 - Clientes (tabela, busca, perfil, máscara de telefone, VIP)
-- Configurações (dados da barbearia, preview do bot, horários de funcionamento)
+- Configurações (dados da barbearia, preview do bot, horários, link do Book com compartilhamento)
 - Agenda (dia/semana/mês, criar/editar/cancelar agendamentos, bloqueio de horários)
+- Agenda visão dia ordenada por horário (agendamentos + bloqueios mesclados)
+- BarberOS Book (/book/[slug]) — agendamento público em 4 etapas, slots sincronizados
 
 ## Próximos passos (MVP)
 1. WhatsApp Bot (Evolution API no Railway)
-2. ~~Página pública de agendamento (/book/[slug])~~ ✅ Implementado
-3. Deploy (Vercel + Railway)
+2. Deploy (Vercel + Railway)
 
 ## Padrão de código usado
 - Server Components buscam dados e passam como props
 - Client Components recebem initialData e fazem mutations
 - Sempre usar o padrão page.tsx (server) + client.tsx (client)
-- Arquivos grandes criados via download, não cat no terminal (WSL corrompe JSX)
 - Supabase client: createClient() do @/lib/supabase/client
 - Supabase server: await createClient() do @/lib/supabase/server
+
+## Documentação detalhada
+- ARCHITECTURE.md → padrões, convenções, tipos, componentes, fluxo de auth
+- SUPABASE.md     → tabelas completas, RLS policies, functions, queries padrão
+- DOCS.md         → referência técnica por módulo
+- README.md       → visão geral, setup local, rotas

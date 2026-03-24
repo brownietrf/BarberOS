@@ -298,6 +298,15 @@ export function AgendaClient({ barbershop, initialAppointments, initialBlockedSl
   const active = appointments.filter(a => a.status !== 'cancelled')
   const pending = appointments.filter(a => a.status === 'pending').length
   const completed = appointments.filter(a => a.status === 'completed').length
+
+  // Visão dia: agendamentos + bloqueios mesclados e ordenados por horário
+  type DayItem =
+    | { kind: 'appointment'; data: AppointmentFull }
+    | { kind: 'block';       data: BlockedSlot }
+  const dayItems: DayItem[] = [
+    ...appointments.map(a => ({ kind: 'appointment' as const, data: a })),
+    ...blockedSlots.map(b => ({ kind: 'block'       as const, data: b })),
+  ].sort((a, b) => new Date(a.data.start_time).getTime() - new Date(b.data.start_time).getTime())
   const weekDays = eachDayOfInterval({ start: startOfWeek(currentDate, { weekStartsOn: 1 }), end: endOfWeek(currentDate, { weekStartsOn: 1 }) })
   const calDays = eachDayOfInterval({ start: startOfWeek(startOfMonth(currentDate), { weekStartsOn: 1 }), end: endOfWeek(endOfMonth(currentDate), { weekStartsOn: 1 }) })
 
@@ -353,21 +362,7 @@ export function AgendaClient({ barbershop, initialAppointments, initialBlockedSl
             <div className="space-y-3">{[1,2,3].map(i => <div key={i} className="h-20 bg-zinc-900 border border-zinc-800 rounded-xl animate-pulse" />)}</div>
           ) : (
             <div className="space-y-3">
-              {blockedSlots.map(block => (
-                <div key={block.id} className="bg-zinc-900 border border-zinc-800 rounded-xl px-5 py-4 flex items-center gap-4">
-                  <div className="w-1 self-stretch bg-zinc-700 rounded-full shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2"><Ban size={14} className="text-zinc-600" /><span className="text-sm text-zinc-500 font-medium">Horário bloqueado</span></div>
-                    <p className="text-xs text-zinc-600 mt-0.5">{fmtTime(block.start_time)} – {fmtTime(block.end_time)}{block.reason && ` · ${block.reason}`}</p>
-                  </div>
-                  <div className="flex gap-1">
-                    <button onClick={() => { setEditBlockForm({ date: format(parseISO(block.start_time),'yyyy-MM-dd'), start_time: fmtTime(block.start_time), end_time: fmtTime(block.end_time), reason: block.reason ?? '' }); setEditBlockModal(block); setError(null) }} className="p-1.5 rounded-lg text-zinc-600 hover:text-zinc-300 hover:bg-zinc-800 transition-colors"><Pencil size={14} /></button>
-                    <button onClick={() => handleDeleteBlock(block.id)} className="p-1.5 rounded-lg text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors"><X size={14} /></button>
-                  </div>
-                </div>
-              ))}
-
-              {appointments.length === 0 && blockedSlots.length === 0 && (
+              {dayItems.length === 0 && (
                 <div className="bg-zinc-900 border border-zinc-800 border-dashed rounded-xl p-12 text-center">
                   <div className="w-12 h-12 bg-zinc-800 rounded-full flex items-center justify-center mx-auto mb-4"><CalendarDays size={20} className="text-zinc-600" /></div>
                   <h3 className="text-white font-medium mb-1">{isOpen ? 'Nenhum agendamento para hoje' : 'Barbearia fechada neste dia'}</h3>
@@ -376,11 +371,33 @@ export function AgendaClient({ barbershop, initialAppointments, initialBlockedSl
                 </div>
               )}
 
-              {appointments.map(appt => {
+              {dayItems.map(item => {
+                if (item.kind === 'block') {
+                  const block = item.data
+                  return (
+                    <div key={`block-${block.id}`} className="bg-zinc-900 border border-zinc-800 rounded-xl px-5 py-4 flex items-center gap-4">
+                      <div className="w-1 self-stretch bg-zinc-700 rounded-full shrink-0" />
+                      <div className="text-center shrink-0 w-14">
+                        <p className="text-zinc-500 font-bold text-sm">{fmtTime(block.start_time)}</p>
+                        <p className="text-zinc-600 text-xs">{fmtTime(block.end_time)}</p>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2"><Ban size={14} className="text-zinc-600" /><span className="text-sm text-zinc-500 font-medium">Horário bloqueado</span></div>
+                        {block.reason && <p className="text-xs text-zinc-600 mt-0.5">{block.reason}</p>}
+                      </div>
+                      <div className="flex gap-1">
+                        <button onClick={() => { setEditBlockForm({ date: format(parseISO(block.start_time),'yyyy-MM-dd'), start_time: fmtTime(block.start_time), end_time: fmtTime(block.end_time), reason: block.reason ?? '' }); setEditBlockModal(block); setError(null) }} className="p-1.5 rounded-lg text-zinc-600 hover:text-zinc-300 hover:bg-zinc-800 transition-colors"><Pencil size={14} /></button>
+                        <button onClick={() => handleDeleteBlock(block.id)} className="p-1.5 rounded-lg text-zinc-600 hover:text-red-400 hover:bg-red-500/10 transition-colors"><X size={14} /></button>
+                      </div>
+                    </div>
+                  )
+                }
+
+                const appt = item.data
                 const cfg = STATUS_CONFIG[appt.status]
                 const isCancelled = appt.status === 'cancelled'
                 return (
-                  <div key={appt.id} className={cn('bg-zinc-900 border rounded-xl px-5 py-4 flex items-center gap-4 transition-all', isCancelled ? 'border-zinc-800/50 opacity-50' : 'border-zinc-800 hover:border-zinc-700')}>
+                  <div key={`appt-${appt.id}`} className={cn('bg-zinc-900 border rounded-xl px-5 py-4 flex items-center gap-4 transition-all', isCancelled ? 'border-zinc-800/50 opacity-50' : 'border-zinc-800 hover:border-zinc-700')}>
                     <div className={cn('w-1 self-stretch rounded-full shrink-0', cfg.dot)} />
                     <div className="text-center shrink-0 w-14">
                       <p className="text-white font-bold text-sm">{fmtTime(appt.start_time)}</p>
@@ -391,6 +408,7 @@ export function AgendaClient({ barbershop, initialAppointments, initialBlockedSl
                         <span className="text-white font-medium text-sm">{appt.customer_name ?? 'Cliente não identificado'}</span>
                         <span className={cn('text-xs px-2 py-0.5 rounded-full border', cfg.bg, cfg.color, cfg.border)}>{cfg.label}</span>
                         {appt.source === 'whatsapp' && <span className="text-xs text-zinc-600">via WhatsApp</span>}
+                        {appt.source === 'web' && <span className="text-xs text-zinc-600">via Book</span>}
                       </div>
                       <div className="flex items-center gap-3 mt-1.5 flex-wrap">
                         {appt.service_name && <span className="flex items-center gap-1 text-xs text-zinc-400"><Scissors size={11} />{appt.service_name}</span>}
