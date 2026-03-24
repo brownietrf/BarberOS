@@ -7,7 +7,7 @@ import {
   ChevronLeft, ChevronRight, Plus, Check,
   X, Scissors, Ban, CalendarDays,
   MoreVertical, Phone, AlertCircle, Pencil,
-  Calendar, List
+  Calendar, List, RefreshCw
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
@@ -124,6 +124,15 @@ export function AgendaClient({ barbershop, initialAppointments, initialBlockedSl
   const [editCustomerSearch, setEditCustomerSearch] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
+
+  async function handleRefresh() {
+    setRefreshing(true)
+    if (view === 'day') await fetchDay(currentDate)
+    else if (view === 'week') await fetchRange(startOfWeek(currentDate, { weekStartsOn: 1 }), endOfWeek(currentDate, { weekStartsOn: 1 }))
+    else await fetchRange(startOfMonth(currentDate), endOfMonth(currentDate))
+    setRefreshing(false)
+  }
 
   const fetchDay = useCallback(async (date: Date) => {
     setLoading(true)
@@ -210,7 +219,13 @@ export function AgendaClient({ barbershop, initialAppointments, initialBlockedSl
       }
     }
     const { error: err } = await supabase.from('appointments').insert({ barbershop_id: barbershop.id, customer_id: custId || null, service_id, start_time: startTime.toISOString(), end_time: endTime.toISOString(), status: 'confirmed', source: 'manual', notes: apptForm.notes.trim() || null })
-    if (err) { setError('Erro ao criar agendamento.'); setSaving(false); return }
+    if (err) {
+      // 23P01 = exclusion_violation (constraint no_overlap_appointments)
+      const msg = (err.code === '23P01' || err.code === '23505')
+        ? 'Já existe um agendamento neste horário. Escolha outro horário.'
+        : 'Erro ao criar agendamento.'
+      setError(msg); setSaving(false); return
+    }
     await fetchDay(currentDate)
     setAppointmentModal(false); setApptForm(EMPTY_APPT); setSaving(false)
   }
@@ -247,7 +262,13 @@ export function AgendaClient({ barbershop, initialAppointments, initialBlockedSl
     if (status === 'confirmed' && editModal.status !== 'confirmed') updates.confirmed_at = new Date().toISOString()
     if (status === 'cancelled' && editModal.status !== 'cancelled') updates.cancelled_at = new Date().toISOString()
     const { error: err } = await supabase.from('appointments').update(updates).eq('id', editModal.id)
-    if (err) { setError('Erro ao salvar.'); setSaving(false); return }
+    if (err) {
+      // 23P01 = exclusion_violation (constraint no_overlap_appointments)
+      const msg = (err.code === '23P01' || err.code === '23505')
+        ? 'Já existe um agendamento neste horário. Escolha outro horário.'
+        : 'Erro ao salvar.'
+      setError(msg); setSaving(false); return
+    }
     await fetchDay(new Date(`${date}T00:00:00`))
     setCurrentDate(new Date(`${date}T00:00:00`))
     setView('day')
@@ -324,6 +345,9 @@ export function AgendaClient({ barbershop, initialAppointments, initialBlockedSl
           {view === 'day' && <p className="text-zinc-400 text-sm mt-1">{active.length} agendamento{active.length !== 1 ? 's' : ''} · {pending} pendente{pending !== 1 ? 's' : ''} · {completed} concluído{completed !== 1 ? 's' : ''}</p>}
         </div>
         <div className="flex gap-2">
+          <button onClick={handleRefresh} disabled={refreshing} title="Atualizar agenda" className="flex items-center gap-2 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-zinc-300 font-medium px-3 py-2.5 rounded-lg text-sm transition-colors">
+            <RefreshCw size={15} className={refreshing ? 'animate-spin' : ''} />
+          </button>
           <button onClick={() => { setBlockForm({ ...EMPTY_BLOCK, date: dateStr }); setError(null); setBlockModal(true) }} className="flex items-center gap-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-medium px-3 py-2.5 rounded-lg text-sm transition-colors">
             <Ban size={15} /> Bloquear
           </button>
