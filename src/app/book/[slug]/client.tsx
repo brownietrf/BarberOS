@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { format, parseISO, addMonths } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
-import { Scissors, ChevronLeft, CheckCircle, AlertCircle } from 'lucide-react'
+import { Scissors, ChevronLeft, CheckCircle, AlertCircle, CalendarPlus } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import type { WorkingHours, ServiceCategory } from '@/types/database'
 
@@ -87,8 +87,13 @@ export default function BookClient({ barbershop, services }: BookClientProps) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  const today = format(new Date(), 'yyyy-MM-dd')
-  const maxDate = format(addMonths(new Date(), 2), 'yyyy-MM-dd')
+  const [today, setToday] = useState('')
+  const [maxDate, setMaxDate] = useState('')
+
+  useEffect(() => {
+    setToday(format(new Date(), 'yyyy-MM-dd'))
+    setMaxDate(format(addMonths(new Date(), 2), 'yyyy-MM-dd'))
+  }, [])
 
   function isWorkingDay(dateStr: string): boolean {
     const date = new Date(dateStr + 'T12:00:00')
@@ -175,7 +180,17 @@ export default function BookClient({ barbershop, services }: BookClientProps) {
         source: 'web',
         notes: notes.trim() || null,
       })
-      if (apptErr) throw apptErr
+      if (apptErr) {
+        // 23P01 = exclusion_violation (constraint no_overlap_appointments)
+        if (apptErr.code === '23P01' || apptErr.code === '23505') {
+          setError('Este horário acabou de ser reservado por outra pessoa. Escolha outro horário.')
+          await loadSlots(selectedDate)
+          setSelectedSlot('')
+          setStep(2)
+          return
+        }
+        throw apptErr
+      }
 
       setStep(4)
     } catch (e: unknown) {
@@ -183,6 +198,53 @@ export default function BookClient({ barbershop, services }: BookClientProps) {
     } finally {
       setLoading(false)
     }
+  }
+
+  async function addToCalendar() {
+    if (!selectedSlot || !selectedService) return
+    const start = new Date(selectedSlot)
+    const end = new Date(start.getTime() + selectedService.duration_min * 60_000)
+    const toICS = (d: Date) => d.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z'
+    const location = [barbershop.address, barbershop.city].filter(Boolean).join(', ')
+    const ics = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//BarberOS//BarberOS//PT',
+      'BEGIN:VEVENT',
+      `UID:${Date.now()}@barberos`,
+      `DTSTAMP:${toICS(new Date())}`,
+      `DTSTART:${toICS(start)}`,
+      `DTEND:${toICS(end)}`,
+      `SUMMARY:${selectedService.name} - ${barbershop.name}`,
+      `DESCRIPTION:Serviço: ${selectedService.name} | Valor: ${fmtPrice(selectedService.price)}`,
+      location ? `LOCATION:${location}` : '',
+      'END:VEVENT',
+      'END:VCALENDAR',
+    ].filter(Boolean).join('\r\n')
+
+    const file = new File([ics], 'agendamento.ics', { type: 'text/calendar' })
+
+    // Web Share API com arquivo — aciona o seletor nativo do iOS e Android
+    // funciona em Safari, Chrome, Firefox mobile independente do browser
+    if (navigator.canShare?.({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file] })
+        return
+      } catch {
+        // usuário cancelou ou share falhou — continua para fallback
+      }
+    }
+
+    // Fallback desktop: força download do .ics
+    const blob = new Blob([ics], { type: 'text/calendar;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'agendamento.ics'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
 
   function reset() {
@@ -290,6 +352,13 @@ export default function BookClient({ barbershop, services }: BookClientProps) {
               {fmtDuration(selectedService?.duration_min ?? 0)}
             </p>
 
+            {error && (
+              <div className="mb-4 flex items-start gap-2 rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-400">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                {error}
+              </div>
+            )}
+
             {/* Date input */}
             <div className="mb-5">
               <label className="mb-1.5 block text-xs uppercase tracking-wide text-zinc-400">
@@ -327,7 +396,7 @@ export default function BookClient({ barbershop, services }: BookClientProps) {
                     {slots.map((slot) => (
                       <button
                         key={slot}
-                        onClick={() => setSelectedSlot(slot)}
+                        onClick={() => { setSelectedSlot(slot); setError('') }}
                         className={`rounded-lg py-2.5 text-sm font-medium transition-colors ${
                           selectedSlot === slot
                             ? 'bg-amber-500 text-black'
@@ -468,6 +537,14 @@ export default function BookClient({ barbershop, services }: BookClientProps) {
               />
               <SummaryRow label="Nome" value={name} />
             </div>
+
+            <button
+              onClick={addToCalendar}
+              className="mb-3 flex w-full items-center justify-center gap-2 rounded-xl bg-zinc-800 py-3 font-medium text-zinc-300 transition-colors hover:bg-zinc-700"
+            >
+              <CalendarPlus className="h-4 w-4" />
+              Adicionar ao calendário
+            </button>
 
             <button
               onClick={reset}
