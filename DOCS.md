@@ -7,23 +7,25 @@ src/
 ├── app/
 │   ├── admin/
 │   │   ├── page.tsx            # Server: verifica ADMIN_EMAIL + busca barbershops + auth users
-│   │   ├── client.tsx          # Client: stats, tabela de usuários, modal de edição de plano
+│   │   ├── client.tsx          # Client: stats+MRR/ARR, gráficos recharts, tabela, CSV export
 │   │   └── actions.ts          # Server Actions: updatePlan, toggleActive (via adminClient)
-│   ├── layout.tsx              # Root layout (fontes, metadata global)
+│   ├── layout.tsx              # Root layout (fontes, metadata global + metadataBase)
 │   ├── page.tsx                # Redireciona → /login
 │   ├── globals.css             # Estilos globais: Tailwind + .input-base + html overflow-x hidden
 │   ├── login/page.tsx          # Auth: login | cadastro | recuperar senha
 │   ├── onboarding/page.tsx     # Wizard 3 passos: cria barbearia no Supabase
 │   ├── reset-password/page.tsx # Troca de senha via exchangeCodeForSession
 │   ├── book/[slug]/            # Página pública de agendamento (sem auth)
-│   │   ├── page.tsx            # Server: busca barbearia + serviços pelo slug
-│   │   └── client.tsx          # Client: fluxo 4 etapas de agendamento
+│   │   ├── page.tsx            # Server: SEO og:*/twitter:card + viewport PWA + manifest link
+│   │   ├── client.tsx          # Client: fluxo 4 etapas + "Adicionar ao calendário" (.ics/Share API)
+│   │   └── manifest.webmanifest/
+│   │       └── route.ts        # Route Handler: manifest PWA dinâmico por slug
 │   └── dashboard/
 │       ├── layout.tsx          # Server: verifica auth + busca barbershop → Sidebar
 │       ├── page.tsx            # Server: stats do dia + banner do plano atual
 │       ├── agenda/
 │       │   ├── page.tsx        # Server: busca appointments_full + blocked_slots
-│       │   └── client.tsx      # Client: visão dia/semana/mês, CRUD completo
+│       │   └── client.tsx      # Client: visão dia/semana/mês, CRUD completo, botão refresh
 │       ├── clientes/
 │       │   ├── page.tsx        # Server: busca customers ordenados por last_visit_at
 │       │   └── client.tsx      # Client: tabela, busca, sort, CRUD + máscara telefone
@@ -31,14 +33,14 @@ src/
 │       │   ├── page.tsx        # Server: busca barbershop
 │       │   └── client.tsx      # Client: cards de planos, banner status trial, texto vantagens
 │       ├── relatorios/
-│       │   ├── page.tsx        # Server: busca appointments_full com período do plano
-│       │   └── client.tsx      # Client: cards, gráficos, insights, gate blur para Pro
+│       │   ├── page.tsx        # Server: busca appointments_full + período anterior + clientes
+│       │   └── client.tsx      # Client: cards+delta, recharts timeline, insights, CSV/PDF, gate Pro
 │       ├── servicos/
 │       │   ├── page.tsx        # Server: busca services ordenados por display_order
-│       │   └── client.tsx      # Client: CRUD, categorias múltiplas, filtros, detecção duplicatas
+│       │   └── client.tsx      # Client: CRUD, duplicatas, templates sugeridos (bulk insert)
 │       └── configuracoes/
 │           ├── page.tsx        # Server: busca barbershop completo por owner_id
-│           └── client.tsx      # Client: edita dados gerais + horários + link do Book
+│           └── client.tsx      # Client: logo upload (Storage), dados gerais, horários, link Book
 ├── components/
 │   ├── layout/sidebar.tsx      # Nav responsiva: desktop sidebar + mobile drawer
 │   │                           # Logo mobile = <Link href="/dashboard">
@@ -49,9 +51,10 @@ src/
 │   │   ├── server.ts           # createClient() async — uso em Server Components / API
 │   │   └── admin.ts            # adminClient — service role key, operações privilegiadas
 │   ├── plans.ts                # PLANS config + isTrialActive/Expired/trialDaysLeft
+│   ├── rate-limit.ts           # Sliding window rate limiter in-memory (20 req/min/IP)
 │   └── utils.ts                # cn() — merge de classes Tailwind
 ├── types/database.ts           # Todos os types/interfaces do banco + AppointmentFull
-└── middleware.ts               # Proteção de rotas: /dashboard/*, /onboarding/*, /admin/*
+└── middleware.ts               # Rate limit /book/*, proteção /dashboard/*, /onboarding/*, /admin/*
 ```
 
 ---
@@ -179,6 +182,8 @@ import { adminClient } from '@/lib/supabase/admin'
 - `fetchDay(date)` / `fetchRange(start, end)` — recarrega agendamentos por período
 - Mutations: criar, editar, cancelar agendamento + criar/editar/deletar bloqueio
 - Tag "via Book" para appointments com `source === 'web'`
+- Botão de refresh manual: recarrega o período atual sem recarregar a página
+- Erro específico `23P01` (exclusion violation) → mensagem "horário já ocupado"
 
 ### `dashboard/clientes/client.tsx`
 - `maskPhone(v)` / `normalizePhone(v)` / `isValidPhone(v)` — utilitários de telefone
@@ -189,11 +194,18 @@ import { adminClient } from '@/lib/supabase/admin'
 - Categorias múltiplas por serviço (array `ServiceCategory[]`)
 - Detecção de duplicata por nome (exato + similaridade) com debounce 400ms
 - `handleSave(force?)` — flag `force` ignora aviso de duplicata
+- `SERVICE_TEMPLATES` — 13 serviços pré-definidos (Cabelo, Barba, Combo, Químicas, Extra)
+- Painel de sugestões auto-exibido para ≤ 5 serviços; botão sutil "Sugestões" para > 5
+- `availableTemplates` (useMemo) filtra templates já cadastrados pelo nome
+- `handleAddTemplates()` — insert em lote, `display_order` sequencial a partir do total atual
 
 ### `dashboard/configuracoes/client.tsx`
 - `saveGeneral()` / `saveHours()` — saves independentes por seção
 - `applyToAll()` — copia horários de um dia para todos os dias ativos
-- Link do Book: cópia para clipboard + compartilhamento via WhatsApp
+- Link do Book: `useState('')` + `useEffect` para evitar hydration mismatch com `window.location.origin`
+- Upload de logo: Supabase Storage bucket `logos`, path `{barbershop_id}/logo`, `upsert: true`
+- Cache-bust `?t=timestamp` na URL salva para forçar reload da imagem no browser
+- Remoção de logo: seta `logo_url = null` no banco
 
 ### `dashboard/relatorios/client.tsx`
 - Período inicial determinado pelo servidor com base em `PLANS[plan].reportPeriods[0]`
@@ -201,6 +213,10 @@ import { adminClient } from '@/lib/supabase/admin'
 - Gate de plano Pro: insights + gráficos renderizados mas cobertos por overlay `backdrop-blur-sm` com card "Recurso Premium"
 - Métricas computadas client-side: agendamentos ativos, receita realizada, status breakdown, top services, por hora/dia
 - Insights automáticos gerados a partir dos dados (dia mais movimentado, horário disputado, etc.)
+- Cards com delta (▲▼ %) comparando período atual com período anterior de igual duração
+- Gráfico recharts `ComposedChart`: barras âmbar (agendamentos) + linha verde (receita), dual Y-axis
+- `exportCSV()` — CSV com BOM (compatível com Excel), separador `;`, download direto
+- `exportPDF()` — jsPDF + autotable: cabeçalho escuro, 4 KPIs, tabela top serviços, tabela completa com paginação
 
 ### `dashboard/planos/client.tsx`
 - 3 cards lado a lado (free/pro/premium) — plano atual destacado com borda amber
@@ -208,11 +224,15 @@ import { adminClient } from '@/lib/supabase/admin'
 - `AdvantagesSection`: texto dinâmico diferente por plano (free = apresentação do BarberOS, pro = destaque Pro + teaser Premium, premium = celebração do plano)
 
 ### `admin/client.tsx`
-- Stats: total barbearias, em teste, teste expirado, planos pagos
+- Stats: 6 cards — total barbearias, em teste, teste expirado, planos pagos, MRR, ARR
+- MRR = Pro × R$49,90 + Premium × R$89,90; ARR = MRR × 12
+- Banner de alerta quando há barbearias com trial expirando em ≤ 7 dias
+- Gráfico de crescimento: `BarChart` recharts, barbearias criadas por mês (últimos 12 meses)
+- Gráfico de mix de planos: `PieChart` donut com legenda (Free/Pro/Premium)
+- `exportCSV()` — exporta tabela filtrada com BOM para Excel
 - Tabela com `overflow-x-auto` + busca por nome/email/slug + filtro por plano
 - Toggle ativo/inativo: update otimista + rollback se server action falhar
 - Modal de edição: seletor de plano (3 cards), date input para trial_ends_at, toggle is_active
-- Toggle CSS: `left-0.5` explícito + `translate-x-0` / `translate-x-5`
 
 ### `admin/actions.ts`
 - `verifyAdmin()` — valida `user.email === process.env.ADMIN_EMAIL` antes de qualquer mutação
@@ -224,6 +244,28 @@ import { adminClient } from '@/lib/supabase/admin'
 - Usa `get_available_slots` RPC para carregar horários livres
 - Faz upsert de customer (busca por telefone, insere se não existir)
 - Cria appointment com `source: 'web'`, `status: 'pending'`
+- Erro `23P01` (exclusion violation) → mensagem específica + recarrega slots automaticamente
+- `addToCalendar()`: Web Share API com arquivo `.ics` (mobile) ou download direto (desktop)
+- `today` e `maxDate` via `useState('')` + `useEffect` para evitar hydration mismatch
+
+### `book/[slug]/page.tsx` (SEO + PWA)
+- `generateMetadata` produz `og:title`, `og:description`, `og:image` (logo ou og-default.png), `twitter:card`
+- `og:image` usa `logo_url` da barbearia se existir; fallback: `/public/og-default.png` (1200×630)
+- `viewport.themeColor = '#f59e0b'` — barra do browser âmbar no Android
+- `appleWebApp.capable = true` — "Adicionar à tela inicial" no iOS sem Chrome
+- `manifest: /book/${slug}/manifest.webmanifest` — linka o manifest PWA dinâmico
+
+### `book/[slug]/manifest.webmanifest/route.ts`
+- Route Handler que retorna JSON do manifest PWA personalizado por barbearia
+- Usa `logo_url` como ícone se existir; fallback: `/icons/icon-192.png` + `/icons/icon-512.png`
+- `display: 'standalone'`, `theme_color: '#f59e0b'`, `background_color: '#09090b'`
+- Cache-Control: public, max-age=3600
+
+### `lib/rate-limit.ts`
+- Sliding window in-memory: `Map<string, { count, resetAt }>`
+- `rateLimit(key, limit, windowMs)` → `{ success, remaining, resetAt }`
+- `cleanup()` executado a cada chamada para evitar leak de memória
+- ⚠️ Funciona por instância — para multi-region produção migrar para Upstash
 
 ---
 
@@ -244,14 +286,55 @@ import { adminClient } from '@/lib/supabase/admin'
 ```env
 NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
-SUPABASE_SERVICE_ROLE_KEY=   # apenas server/admin
-ADMIN_EMAIL=                 # e-mail do administrador da plataforma
+SUPABASE_SERVICE_ROLE_KEY=    # apenas server/admin
+ADMIN_EMAIL=                  # e-mail do administrador da plataforma
+NEXT_PUBLIC_APP_URL=          # URL pública (ex: https://barberos.vercel.app) — og:url e manifest
+# Futuro — chatbot:
+EVOLUTION_API_URL=
+EVOLUTION_API_KEY=
+WEBHOOK_SECRET=               # opcional: valida origem do webhook da Evolution API
 ```
+
+---
+
+## Arquivos estáticos obrigatórios (criar manualmente)
+
+| Arquivo | Tamanho | Uso |
+|---|---|---|
+| `public/og-default.png` | 1200×630 px | Fallback og:image quando barbearia não tem logo |
+| `public/icons/icon-192.png` | 192×192 px | Fallback ícone PWA |
+| `public/icons/icon-512.png` | 512×512 px | Fallback ícone PWA (splash screen) |
+
+---
+
+## Supabase Storage
+
+| Bucket | Visibilidade | Path | Uso |
+|---|---|---|---|
+| `logos` | Public | `{barbershop_id}/logo` | Logo da barbearia (upsert) |
+
+Políticas necessárias: SELECT público (anon), INSERT/UPDATE/DELETE apenas para o dono da barbearia (`owner_id = auth.uid()`). Ver SQL completo no histórico de implementação.
+
+---
+
+## Proteção anti-race condition em agendamentos
+
+Constraint no banco (executada via SQL Editor do Supabase):
+```sql
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+ALTER TABLE appointments ADD CONSTRAINT no_overlap_appointments
+EXCLUDE USING gist (
+  barbershop_id WITH =,
+  tstzrange(start_time, end_time, '[)') WITH &&
+)
+WHERE (status IN ('pending', 'confirmed'));
+```
+Código de erro retornado: `23P01` (exclusion_violation) — tratado explicitamente no book e na agenda.
 
 ---
 
 ## Próximos Passos (MVP)
 
-1. **WhatsApp Bot** — Evolution API no Railway, integração via `bot_sessions` + `whatsapp_instances`
-2. **Deploy** — Vercel (Next.js) + Railway (Evolution API)
-3. **Notificações de lembrete** — bot envia lembrete antes do agendamento
+1. **Deploy** — Vercel (Next.js) + Render (Evolution API)
+2. **WhatsApp Bot** — Evolution API, integração via `bot_sessions` + `whatsapp_instances` (ver `CHATBOT.md`)
+3. **Notificações de lembrete** — cron Vercel às 18h + bot envia via Evolution API
