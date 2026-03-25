@@ -1,14 +1,15 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { cn } from '@/lib/utils'
-import type { Barbershop, WorkingHours, DaySchedule } from '@/types/database'
+import type { Barbershop, WorkingHours, DaySchedule, WhatsappInstance } from '@/types/database'
 import {
   Store, Clock, Bot, User,
   Save, CheckCircle, AlertTriangle,
   Link2, Copy, Check, ExternalLink,
   ImageIcon, Upload, Loader2, X as XIcon,
+  Wifi, WifiOff, QrCode, RefreshCw, LogOut,
 } from 'lucide-react'
 
 const DAY_LABELS: Record<string, string> = {
@@ -33,11 +34,12 @@ const TIME_OPTIONS = Array.from({ length: 28 }, (_, i) => {
 interface Props {
   barbershop: Barbershop
   userEmail: string
+  whatsappInstance: WhatsappInstance | null
 }
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 
-export function ConfiguracoesClient({ barbershop, userEmail }: Props) {
+export function ConfiguracoesClient({ barbershop, userEmail, whatsappInstance }: Props) {
   const supabase = createClient()
 
   // Dados gerais
@@ -59,6 +61,17 @@ export function ConfiguracoesClient({ barbershop, userEmail }: Props) {
   const [hoursStatus, setHoursStatus] = useState<SaveStatus>('idle')
   const [copied, setCopied] = useState(false)
   const [bookingUrl, setBookingUrl] = useState(`/book/${barbershop.slug}`)
+
+  // WhatsApp Bot connection
+  const [instanceStatus, setInstanceStatus] = useState<string | null>(
+    whatsappInstance?.status ?? null
+  )
+  const [qrCode, setQrCode] = useState<string | null>(whatsappInstance?.qr_code ?? null)
+  const [instancePhone, setInstancePhone] = useState<string | null>(
+    whatsappInstance?.phone_number ?? null
+  )
+  const [botLoading, setBotLoading] = useState(false)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // Logo
   const [logoUrl, setLogoUrl]       = useState<string | null>(barbershop.logo_url)
@@ -226,6 +239,60 @@ export function ConfiguracoesClient({ barbershop, userEmail }: Props) {
 
     setHoursStatus(error ? 'error' : 'saved')
     if (!error) setTimeout(() => setHoursStatus('idle'), 3000)
+  }
+
+  // ── Handlers WhatsApp Bot ─────────────────────────────────
+
+  // Polling enquanto status === 'connecting'
+  useEffect(() => {
+    if (instanceStatus !== 'connecting') {
+      if (pollRef.current) clearInterval(pollRef.current)
+      return
+    }
+
+    pollRef.current = setInterval(async () => {
+      const res = await fetch('/api/bot/instance/status')
+      if (!res.ok) return
+      const data = await res.json()
+
+      if (data.status === 'connected') {
+        setInstanceStatus('connected')
+        setQrCode(null)
+        setInstancePhone(data.phone_number ?? null)
+        if (pollRef.current) clearInterval(pollRef.current)
+      } else if (data.qr_code && data.qr_code !== qrCode) {
+        setQrCode(data.qr_code)
+      }
+    }, 5000)
+
+    return () => { if (pollRef.current) clearInterval(pollRef.current) }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [instanceStatus])
+
+  async function connectBot() {
+    setBotLoading(true)
+    try {
+      const res = await fetch('/api/bot/instance', { method: 'POST' })
+      const data = await res.json()
+      if (res.ok) {
+        setInstanceStatus('connecting')
+        setQrCode(data.qr_code ?? null)
+      }
+    } finally {
+      setBotLoading(false)
+    }
+  }
+
+  async function disconnectBot() {
+    setBotLoading(true)
+    try {
+      await fetch('/api/bot/instance', { method: 'DELETE' })
+      setInstanceStatus('disconnected')
+      setQrCode(null)
+      setInstancePhone(null)
+    } finally {
+      setBotLoading(false)
+    }
   }
 
   return (
@@ -466,6 +533,101 @@ export function ConfiguracoesClient({ barbershop, userEmail }: Props) {
           </div>
 
           <SaveButton status={generalStatus} onClick={saveGeneral} />
+        </div>
+      </Section>
+
+      {/* ── Seção: Conexão WhatsApp ── */}
+      <Section
+        icon={<QrCode size={16} />}
+        title="Conexão WhatsApp"
+        subtitle="Vincule o número de WhatsApp que o bot vai usar para atender clientes"
+      >
+        <div className="flex flex-col gap-5">
+
+          {/* Status badge */}
+          <div className="flex items-center gap-3">
+            <span className="text-sm text-zinc-400">Status:</span>
+            {instanceStatus === 'connected' && (
+              <span className="flex items-center gap-1.5 text-green-400 text-sm font-medium">
+                <Wifi size={14} /> Conectado
+                {instancePhone && <span className="text-zinc-500 font-normal">— {instancePhone}</span>}
+              </span>
+            )}
+            {instanceStatus === 'connecting' && (
+              <span className="flex items-center gap-1.5 text-amber-400 text-sm font-medium">
+                <Loader2 size={14} className="animate-spin" /> Aguardando leitura do QR code…
+              </span>
+            )}
+            {(instanceStatus === 'disconnected' || instanceStatus === 'banned') && (
+              <span className="flex items-center gap-1.5 text-red-400 text-sm font-medium">
+                <WifiOff size={14} /> Desconectado
+              </span>
+            )}
+            {!instanceStatus && (
+              <span className="flex items-center gap-1.5 text-zinc-500 text-sm">
+                <WifiOff size={14} /> Não configurado
+              </span>
+            )}
+          </div>
+
+          {/* QR Code */}
+          {instanceStatus === 'connecting' && qrCode && (
+            <div className="flex flex-col items-start gap-3">
+              <div className="bg-white p-3 rounded-xl inline-block">
+                <img
+                  src={qrCode.startsWith('data:') ? qrCode : `data:image/png;base64,${qrCode}`}
+                  alt="QR Code WhatsApp"
+                  className="w-48 h-48"
+                />
+              </div>
+              <p className="text-xs text-zinc-500 max-w-xs">
+                Abra o WhatsApp no celular → <strong className="text-zinc-400">Dispositivos vinculados</strong> → <strong className="text-zinc-400">Vincular dispositivo</strong> e escaneie o código acima.
+                O QR code atualiza automaticamente.
+              </p>
+            </div>
+          )}
+
+          {/* Ações */}
+          <div className="flex items-center gap-3 flex-wrap">
+            {instanceStatus === 'connected' ? (
+              <button
+                onClick={disconnectBot}
+                disabled={botLoading}
+                className="flex items-center gap-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 text-sm font-medium px-4 py-2.5 rounded-lg transition-colors disabled:opacity-50"
+              >
+                {botLoading
+                  ? <Loader2 size={14} className="animate-spin" />
+                  : <LogOut size={14} />}
+                Desconectar WhatsApp
+              </button>
+            ) : (
+              <button
+                onClick={connectBot}
+                disabled={botLoading || instanceStatus === 'connecting'}
+                className="flex items-center gap-2 bg-green-600 hover:bg-green-500 disabled:bg-green-600/50 text-white text-sm font-semibold px-4 py-2.5 rounded-lg transition-colors"
+              >
+                {botLoading
+                  ? <Loader2 size={14} className="animate-spin" />
+                  : <QrCode size={14} />}
+                {instanceStatus === 'connecting' ? 'Aguardando leitura…' : 'Conectar WhatsApp'}
+              </button>
+            )}
+
+            {instanceStatus === 'connecting' && (
+              <button
+                onClick={connectBot}
+                disabled={botLoading}
+                className="flex items-center gap-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-sm text-zinc-300 px-3 py-2.5 rounded-lg transition-colors disabled:opacity-50"
+              >
+                <RefreshCw size={14} /> Gerar novo QR code
+              </button>
+            )}
+          </div>
+
+          <p className="text-xs text-zinc-600">
+            O bot usará este número para responder automaticamente aos clientes via WhatsApp.
+            Mantenha o celular com bateria e internet para a conexão permanecer ativa.
+          </p>
         </div>
       </Section>
 
