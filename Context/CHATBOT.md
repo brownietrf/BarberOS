@@ -16,10 +16,8 @@ O objetivo agora é implementar um **chatbot de agendamento via WhatsApp** com o
 ## Stack tecnológica obrigatória (custo zero)
 
 - **Evolution API** (open source, gratuita) — conecta ao WhatsApp via WhatsApp Web, sem custo de mensagens
-- **Render.com** (free tier) — para hospedar o container da Evolution API
 - **Webhook handler** como API Route dentro do próprio projeto Next.js no Vercel — sem custo extra de hosting
 - **Supabase** (já usado no projeto) — persiste sessões do bot e dados de agendamento
-- **Sem IA/LLM** — fluxo por máquina de estados (mais rápido, sem custo, sem tokens)
 
 ---
 
@@ -147,7 +145,7 @@ MENU
   → cliente responde "3" → vai para CANCEL_APPOINTMENT
 
 SELECT_SERVICE
-  → bot lista serviços numerados (nome + preço + duração)
+  → bot lista serviços por categoria numerados e depois os serviços da categoria numerados (nome + preço + duração)
   → cliente escolhe número → salva service_id no context → vai para SELECT_DATE
 
 SELECT_DATE
@@ -199,7 +197,7 @@ Como posso te ajudar?
 
 - Telefones são normalizados antes de qualquer query: remover `+55`, remover espaços, remover `-`
 - Mensagens do cliente são normalizadas: `.trim().toLowerCase()`
-- Se cliente manda mensagem fora do fluxo (palavra solta), o bot reexibe o menu
+- Se cliente manda mensagem fora do fluxo (palavra solta), vamos usar gpt-4o-mini para entender contexto simples ou triagem para compreensão (Exemplo: é mostrado o dia e horário para o cliente e ao invés dele mandar o número, ele digita o texto)
 - Sessão expira após 30 minutos de inatividade → limpa context, volta para IDLE
 - Se a barbearia estiver `is_active = false` → bot não responde
 - O `source` do appointment criado pelo bot deve ser `'whatsapp'`
@@ -282,17 +280,16 @@ Configurar no `vercel.json`:
 
 ---
 
-## Deploy da Evolution API no Render (free tier)
+## Deploy da Evolution API
 
-1. Criar conta em render.com
+1. Criar conta na plataforma de deploy (identificar a melhor)
 2. New → Web Service → Docker image: `atendai/evolution-api:latest`
 3. Variáveis de ambiente:
    ```
    AUTHENTICATION_TYPE=apikey
    AUTHENTICATION_API_KEY=sua-chave-secreta
-   DATABASE_ENABLED=false   # usa armazenamento em memória (free tier)
+   DATABASE_ENABLED=false/true (identifique a melhor opção)
    ```
-4. Free tier dorme após 15 min de inatividade — configurar um health check ping ou aceitar o cold start
 
 ---
 
@@ -311,7 +308,7 @@ WEBHOOK_SECRET=chave-para-validar-origem-do-webhook  # opcional mas recomendado
 - Envio de promoções em massa (feature Premium — implementar depois)
 - Múltiplos profissionais por barbearia (requer mudança de schema)
 - Pagamento via bot
-- Qualquer integração com IA/LLM
+- Qualquer integração com IA/LLM (vamos fazer apenas após funcionar a primeira conexão)
 
 ---
 
