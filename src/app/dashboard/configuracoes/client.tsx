@@ -1,13 +1,14 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { cn } from '@/lib/utils'
 import type { Barbershop, WorkingHours, DaySchedule } from '@/types/database'
 import {
   Store, Clock, Bot, User,
   Save, CheckCircle, AlertTriangle,
-  Link2, Copy, Check, ExternalLink
+  Link2, Copy, Check, ExternalLink,
+  ImageIcon, Upload, Loader2, X as XIcon,
 } from 'lucide-react'
 
 const DAY_LABELS: Record<string, string> = {
@@ -57,10 +58,16 @@ export function ConfiguracoesClient({ barbershop, userEmail }: Props) {
   const [generalStatus, setGeneralStatus] = useState<SaveStatus>('idle')
   const [hoursStatus, setHoursStatus] = useState<SaveStatus>('idle')
   const [copied, setCopied] = useState(false)
+  const [bookingUrl, setBookingUrl] = useState(`/book/${barbershop.slug}`)
 
-  const bookingUrl = typeof window !== 'undefined'
-    ? `${window.location.origin}/book/${barbershop.slug}`
-    : `/book/${barbershop.slug}`
+  // Logo
+  const [logoUrl, setLogoUrl]       = useState<string | null>(barbershop.logo_url)
+  const [logoStatus, setLogoStatus] = useState<'idle' | 'uploading' | 'saved' | 'error'>('idle')
+  const [logoError, setLogoError]   = useState('')
+
+  useEffect(() => {
+    setBookingUrl(`${window.location.origin}/book/${barbershop.slug}`)
+  }, [barbershop.slug])
 
   function copyLink() {
     navigator.clipboard.writeText(bookingUrl).then(() => {
@@ -72,6 +79,81 @@ export function ConfiguracoesClient({ barbershop, userEmail }: Props) {
   function shareWhatsApp() {
     const text = `Olá! Agende seu horário na *${barbershop.name}* pelo link:\n${bookingUrl}`
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank')
+  }
+
+  // ── Handlers logo ────────────────────────────────────────
+
+  async function handleLogoChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    if (!file.type.startsWith('image/')) {
+      setLogoError('Formato inválido. Use JPG, PNG ou WebP.')
+      setLogoStatus('error')
+      return
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      setLogoError('Arquivo muito grande. Máximo 2 MB.')
+      setLogoStatus('error')
+      return
+    }
+
+    setLogoStatus('uploading')
+    setLogoError('')
+
+    const { error: uploadError } = await supabase.storage
+      .from('logos')
+      .upload(`${barbershop.id}/logo`, file, { upsert: true, contentType: file.type })
+
+    if (uploadError) {
+      setLogoError('Erro ao enviar. Tente novamente.')
+      setLogoStatus('error')
+      return
+    }
+
+    const { data: { publicUrl } } = supabase.storage
+      .from('logos')
+      .getPublicUrl(`${barbershop.id}/logo`)
+
+    // cache-bust para forçar reload da imagem no browser
+    const freshUrl = `${publicUrl}?t=${Date.now()}`
+
+    const { error: updateError } = await supabase
+      .from('barbershops')
+      .update({ logo_url: freshUrl })
+      .eq('id', barbershop.id)
+
+    if (updateError) {
+      setLogoError('Erro ao salvar URL. Tente novamente.')
+      setLogoStatus('error')
+      return
+    }
+
+    setLogoUrl(freshUrl)
+    setLogoStatus('saved')
+    setTimeout(() => setLogoStatus('idle'), 3000)
+
+    // limpa o input para permitir re-upload do mesmo arquivo
+    e.target.value = ''
+  }
+
+  async function removeLogo() {
+    setLogoStatus('uploading')
+    setLogoError('')
+
+    const { error } = await supabase
+      .from('barbershops')
+      .update({ logo_url: null })
+      .eq('id', barbershop.id)
+
+    if (error) {
+      setLogoError('Erro ao remover. Tente novamente.')
+      setLogoStatus('error')
+      return
+    }
+
+    setLogoUrl(null)
+    setLogoStatus('idle')
   }
 
   // ── Handlers gerais ──────────────────────────────────────
@@ -156,6 +238,72 @@ export function ConfiguracoesClient({ barbershop, userEmail }: Props) {
           Gerencie os dados e preferências da barbearia
         </p>
       </div>
+
+      {/* ── Seção: Logo ── */}
+      <Section icon={<ImageIcon size={16} />} title="Logo da barbearia" subtitle="Exibida na página de agendamento e nos links compartilhados">
+        <div className="flex items-start gap-5">
+
+          {/* Preview */}
+          <div className="relative shrink-0">
+            <div className="w-24 h-24 rounded-xl bg-zinc-800 border-2 border-zinc-700 overflow-hidden flex items-center justify-center">
+              {logoUrl ? (
+                <img src={logoUrl} alt="Logo" className="w-full h-full object-cover" />
+              ) : (
+                <Store size={32} className="text-zinc-600" />
+              )}
+            </div>
+            {logoUrl && (
+              <button
+                onClick={removeLogo}
+                disabled={logoStatus === 'uploading'}
+                title="Remover logo"
+                className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 hover:bg-red-400 disabled:opacity-50 rounded-full flex items-center justify-center transition-colors"
+              >
+                <XIcon size={10} className="text-white" />
+              </button>
+            )}
+          </div>
+
+          {/* Controles */}
+          <div className="flex flex-col gap-3">
+            <div>
+              <label
+                htmlFor="logo-upload"
+                className={cn(
+                  'inline-flex items-center gap-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-sm font-medium text-white px-4 py-2.5 rounded-lg transition-colors cursor-pointer',
+                  logoStatus === 'uploading' && 'opacity-50 pointer-events-none'
+                )}
+              >
+                {logoStatus === 'uploading'
+                  ? <><Loader2 size={14} className="animate-spin" /> Enviando…</>
+                  : <><Upload size={14} /> {logoUrl ? 'Alterar logo' : 'Enviar logo'}</>
+                }
+              </label>
+              <input
+                id="logo-upload"
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handleLogoChange}
+                disabled={logoStatus === 'uploading'}
+              />
+            </div>
+
+            {logoStatus === 'saved' && (
+              <span className="flex items-center gap-1.5 text-green-400 text-sm">
+                <CheckCircle size={14} /> Logo atualizada!
+              </span>
+            )}
+            {logoStatus === 'error' && (
+              <span className="flex items-center gap-1.5 text-red-400 text-sm">
+                <AlertTriangle size={14} /> {logoError}
+              </span>
+            )}
+
+            <p className="text-xs text-zinc-500">JPG, PNG ou WebP · Máximo 2 MB · Recomendado: 512×512 px</p>
+          </div>
+        </div>
+      </Section>
 
       {/* ── Seção: Link de agendamento ── */}
       <Section icon={<Link2 size={16} />} title="Link de agendamento" subtitle="Compartilhe com seus clientes para receberem agendamentos online">

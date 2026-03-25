@@ -1,8 +1,12 @@
 import { createClient } from '@/lib/supabase/server'
 import { notFound } from 'next/navigation'
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import BookClient from './client'
 import type { WorkingHours } from '@/types/database'
+
+export const viewport: Viewport = {
+  themeColor: '#f59e0b',
+}
 
 type Props = { params: Promise<{ slug: string }> }
 
@@ -11,15 +15,43 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const supabase = await createClient()
   const { data } = await supabase
     .from('barbershops')
-    .select('name, city')
+    .select('name, city, logo_url')
     .eq('slug', slug)
     .eq('is_active', true)
     .single()
 
   if (!data) return { title: 'Barbearia não encontrada' }
+
+  const title       = `Agendar — ${data.name}`
+  const description = `Agende seu horário na ${data.name}${data.city ? ` em ${data.city}` : ''}. Rápido, fácil e sem ligação.`
+  const url         = `${process.env.NEXT_PUBLIC_APP_URL ?? ''}/book/${slug}`
+  const images      = data.logo_url
+    ? [{ url: data.logo_url, width: 512, height: 512, alt: data.name }]
+    : [{ url: '/og-default.png', width: 1200, height: 630, alt: 'BarberOS' }]
+
   return {
-    title: `Agendar — ${data.name}`,
-    description: `Agende seu horário na ${data.name}${data.city ? ` em ${data.city}` : ''}`,
+    title,
+    description,
+    manifest: `/book/${slug}/manifest.webmanifest`,
+    appleWebApp: {
+      capable:         true,
+      title:           data.name,
+      statusBarStyle:  'black-translucent',
+    },
+    openGraph: {
+      type:        'website',
+      url,
+      title,
+      description,
+      siteName:    data.name,
+      images,
+    },
+    twitter: {
+      card:        'summary_large_image',
+      title,
+      description,
+      images:      images.map(i => i.url),
+    },
   }
 }
 
