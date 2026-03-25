@@ -22,11 +22,11 @@ Sistema completo de gestão para barbearias. Painel administrativo para o barbei
 
 ### Painel do Barbeiro (`/dashboard`)
 - **Visão Geral** — stats do dia + banner com status do plano e botão "Ver planos"
-- **Agenda** — visualização dia / semana / mês, criar, editar e cancelar agendamentos, bloquear horários. Visão dia ordenada por horário, mesclando agendamentos e bloqueios
+- **Agenda** — visualização dia / semana / mês, criar, editar e cancelar agendamentos, bloquear horários. Visão dia ordenada por horário, mesclando agendamentos e bloqueios. Botão de refresh manual
 - **Clientes** — cadastro, busca, ordenação, indicador VIP (10+ visitas)
-- **Serviços** — CRUD com categorias múltiplas, filtros, detecção de duplicatas
-- **Configurações** — dados da barbearia, horários por dia da semana, link do Book com cópia e compartilhamento via WhatsApp
-- **Relatórios** — cards de receita/agendamentos/clientes/cancelamento, gráficos por dia da semana / hora / serviço / status, insights automáticos. Conteúdo gateado por plano (Pro vê apenas cards básicos; insights e gráficos ficam com blur "Recurso Premium")
+- **Serviços** — CRUD com categorias múltiplas, filtros, detecção de duplicatas. Painel de serviços sugeridos (13 templates) com insert em lote — exibido automaticamente para novos usuários
+- **Configurações** — upload de logo (Supabase Storage), dados da barbearia, horários por dia da semana, link do Book com cópia e compartilhamento via WhatsApp
+- **Relatórios** — cards com delta (▲▼ %), gráfico recharts de timeline, insights automáticos, exportação CSV e PDF. Conteúdo gateado por plano (Pro: blur "Recurso Premium")
 - **Planos** — tabela comparativa free/pro/premium com texto de vantagens dinâmico conforme o plano atual
 
 ### BarberOS Book (`/book/[slug]`)
@@ -34,12 +34,18 @@ Página pública de autoatendimento. O cliente acessa pelo link da barbearia e a
 1. Escolhe o serviço
 2. Seleciona data e horário disponível (sincronizado com agenda e horários de funcionamento)
 3. Informa nome e WhatsApp
-4. Recebe confirmação na tela
+4. Recebe confirmação na tela com opção "Adicionar ao calendário" (.ics / Web Share API)
+
+**SEO**: og:title, og:description, og:image (logo da barbearia ou og-default.png), twitter:card
+**PWA**: manifest dinâmico por slug, tema âmbar, "Adicionar à tela inicial" no Android e iOS
+**Rate limiting**: 20 requisições/minuto por IP
 
 ### Painel Admin (`/admin`)
 Acesso restrito ao e-mail definido em `ADMIN_EMAIL`:
-- Visão de todas as barbearias cadastradas
-- Stats: total, em trial, trial expirado, planos pagos
+- Stats: total barbearias, em trial, expirado, planos pagos, MRR e ARR
+- Alerta automático de trials expirando em ≤ 7 dias
+- Gráfico de crescimento mensal (recharts) e mix de planos (donut chart)
+- Exportação CSV da tabela filtrada
 - Edição de plano (free/pro/premium), data de fim do trial e status ativo/inativo
 - Mutations via Server Actions com service role (sem exposição da chave no browser)
 
@@ -186,6 +192,7 @@ NEXT_PUBLIC_SUPABASE_URL=https://xxxx.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJ...
 SUPABASE_SERVICE_ROLE_KEY=eyJ...
 ADMIN_EMAIL=seu@email.com
+NEXT_PUBLIC_APP_URL=https://seu-dominio.vercel.app
 ```
 
 ### 3. Configure o banco
@@ -251,6 +258,6 @@ import { adminClient } from '@/lib/supabase/admin'
 
 ## Próximos Passos
 
-- [ ] WhatsApp Bot — integração com Evolution API no Railway
-- [ ] Deploy — Vercel + Railway
-- [ ] Notificações de lembrete de agendamento
+- [ ] Deploy — Vercel (Next.js) + Render (Evolution API)
+- [ ] WhatsApp Bot — Evolution API + webhook Next.js (ver `CHATBOT.md`)
+- [ ] Notificações de lembrete — cron Vercel + bot envia via Evolution API

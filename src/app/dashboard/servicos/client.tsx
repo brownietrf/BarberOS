@@ -1,12 +1,13 @@
 'use client'
 
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { Modal } from '@/components/ui/modal'
 import {
   Scissors, Plus, Pencil, Trash2, Clock,
   DollarSign, ToggleLeft, ToggleRight, GripVertical,
-  AlertTriangle, Tag, ChevronDown, ChevronRight
+  AlertTriangle, Tag, ChevronDown, ChevronRight,
+  Sparkles, Check,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { Service, ServiceCategory } from '@/types/database'
@@ -37,6 +38,37 @@ const CATEGORY_ICONS: Record<ServiceCategory, string> = {
   Químicas: '🧪',
   Extra:    '✨',
 }
+
+// ─── Templates de serviços sugeridos ──────────────────────────────────────────
+
+interface ServiceTemplate {
+  name: string
+  description?: string
+  category: ServiceCategory[]
+  duration_min: number
+  price: number
+}
+
+const SERVICE_TEMPLATES: ServiceTemplate[] = [
+  // Cabelo
+  { name: 'Corte Simples',        category: ['Cabelo'],    duration_min: 30,  price: 25  },
+  { name: 'Corte Degradê',        category: ['Cabelo'],    duration_min: 45,  price: 40  },
+  { name: 'Corte na Tesoura',     category: ['Cabelo'],    duration_min: 45,  price: 45  },
+  { name: 'Corte Infantil',       category: ['Cabelo'],    duration_min: 30,  price: 25  },
+  // Barba
+  { name: 'Barba Simples',        category: ['Barba'],     duration_min: 20,  price: 20  },
+  { name: 'Barba Completa',       category: ['Barba'],     duration_min: 30,  price: 35  },
+  { name: 'Barba Terapia',        category: ['Barba'],     duration_min: 40,  price: 50, description: 'Toalha quente, navalha e hidratante' },
+  // Combo
+  { name: 'Combo Corte + Barba',  category: ['Combo'],     duration_min: 60,  price: 55  },
+  { name: 'Combo Premium',        category: ['Combo'],     duration_min: 75,  price: 75, description: 'Corte + barba completa com toalha quente' },
+  // Químicas
+  { name: 'Relaxamento',          category: ['Químicas'],  duration_min: 90,  price: 80  },
+  { name: 'Progressiva',          category: ['Químicas'],  duration_min: 120, price: 120 },
+  // Extra
+  { name: 'Hidratação Capilar',   category: ['Extra'],     duration_min: 30,  price: 40  },
+  { name: 'Sobrancelha',          category: ['Extra'],     duration_min: 15,  price: 15  },
+]
 
 function fmt_price(price: number) {
   return price.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
@@ -74,6 +106,17 @@ export function ServicosClient({ barbershopId, initialServices }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [duplicate, setDuplicate] = useState<DuplicateWarning | null>(null)
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+  const [showTemplates, setShowTemplates]         = useState(initialServices.length <= 5)
+  const [selectedTemplates, setSelectedTemplates] = useState<Set<number>>(new Set())
+  const [addingTemplates, setAddingTemplates]     = useState(false)
+
+  // Templates disponíveis: exclui serviços já cadastrados pelo nome
+  const availableTemplates = useMemo(
+    () => SERVICE_TEMPLATES.filter(t =>
+      !services.some(s => s.name.toLowerCase() === t.name.toLowerCase())
+    ),
+    [services]
+  )
   const [filterCat, setFilterCat] = useState<ServiceCategory | 'Todos' | 'Sem categoria'>('Todos')
   const [filterStatus, setFilterStatus] = useState<'todos' | 'ativo' | 'inativo'>('todos')
   const [sortBy, setSortBy] = useState<'ordem' | 'nome' | 'preco_asc' | 'preco_desc' | 'duracao'>('ordem')
@@ -199,6 +242,45 @@ export function ServicosClient({ barbershopId, initialServices }: Props) {
     setDeleteModal(null)
   }
 
+  // ── Handlers templates ───────────────────────────────────────────────────
+
+  function toggleTemplate(idx: number) {
+    setSelectedTemplates(prev => {
+      const next = new Set(prev)
+      next.has(idx) ? next.delete(idx) : next.add(idx)
+      return next
+    })
+  }
+
+  function toggleAllTemplates() {
+    setSelectedTemplates(prev =>
+      prev.size === availableTemplates.length
+        ? new Set()
+        : new Set(availableTemplates.map((_, i) => i))
+    )
+  }
+
+  async function handleAddTemplates() {
+    if (selectedTemplates.size === 0) return
+    setAddingTemplates(true)
+
+    const toInsert = Array.from(selectedTemplates).map((idx, order) => ({
+      barbershop_id: barbershopId,
+      name:         availableTemplates[idx].name,
+      description:  availableTemplates[idx].description ?? null,
+      duration_min: availableTemplates[idx].duration_min,
+      price:        availableTemplates[idx].price,
+      is_active:    true,
+      category:     availableTemplates[idx].category,
+      display_order: services.length + order,
+    }))
+
+    await supabase.from('services').insert(toInsert)
+    await fetchServices()
+    setShowTemplates(false)
+    setAddingTemplates(false)
+  }
+
   function toggleGroup(key: string) {
     setCollapsed(prev => {
       const next = new Set(prev)
@@ -247,10 +329,158 @@ export function ServicosClient({ barbershopId, initialServices }: Props) {
             {services.length} cadastrados · {activeCount} ativos
           </p>
         </div>
-        <button onClick={openCreate} className="flex items-center gap-2 bg-amber-500 hover:bg-amber-400 text-black font-semibold px-4 py-2.5 rounded-lg text-sm transition-colors">
-          <Plus size={16} /> Novo serviço
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Botão sutil de sugestões para quem já tem serviços suficientes */}
+          {services.length > 5 && availableTemplates.length > 0 && (
+            <button
+              onClick={() => { setShowTemplates(v => !v); setSelectedTemplates(new Set()) }}
+              className={cn(
+                'flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border transition-all',
+                showTemplates
+                  ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                  : 'text-zinc-400 border-zinc-800 hover:border-zinc-600 hover:text-zinc-200'
+              )}
+            >
+              <Sparkles size={12} />
+              Sugestões
+            </button>
+          )}
+          <button onClick={openCreate} className="flex items-center gap-2 bg-amber-500 hover:bg-amber-400 text-black font-semibold px-4 py-2.5 rounded-lg text-sm transition-colors">
+            <Plus size={16} /> Novo serviço
+          </button>
+        </div>
       </div>
+
+      {/* ── Painel de templates ── */}
+      {showTemplates && availableTemplates.length > 0 && (
+        <div className="mb-8 bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+
+          {/* Header do painel */}
+          <div className="px-5 py-4 border-b border-zinc-800 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <div className="w-7 h-7 bg-amber-500/10 rounded-lg flex items-center justify-center">
+                <Sparkles size={14} className="text-amber-400" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-white">Serviços sugeridos</p>
+                <p className="text-xs text-zinc-500">Selecione os que fazem sentido para sua barbearia e adicione com um clique</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setShowTemplates(false)}
+              className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors shrink-0"
+            >
+              Pular
+            </button>
+          </div>
+
+          {/* Cards por categoria */}
+          <div className="p-5 space-y-5">
+            {CATEGORIES.map(cat => {
+              const items = availableTemplates
+                .map((t, i) => ({ t, i }))
+                .filter(({ t }) => t.category.includes(cat))
+              if (items.length === 0) return null
+              return (
+                <div key={cat}>
+                  <div className="flex items-center gap-2 mb-2.5">
+                    <span className={cn('text-xs font-semibold px-2.5 py-1 rounded-full border', CATEGORY_COLORS[cat])}>
+                      {CATEGORY_ICONS[cat]} {cat}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {items.map(({ t, i }) => {
+                      const selected = selectedTemplates.has(i)
+                      return (
+                        <button
+                          key={i}
+                          onClick={() => toggleTemplate(i)}
+                          className={cn(
+                            'flex items-start gap-3 text-left px-4 py-3 rounded-xl border transition-all',
+                            selected
+                              ? 'bg-amber-500/10 border-amber-500/40'
+                              : 'bg-zinc-800/40 border-zinc-800 hover:border-zinc-600'
+                          )}
+                        >
+                          <div className={cn(
+                            'mt-0.5 w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-all',
+                            selected ? 'bg-amber-500 border-amber-500' : 'border-zinc-600'
+                          )}>
+                            {selected && <Check size={10} className="text-black" />}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-white leading-snug">{t.name}</p>
+                            {t.description && (
+                              <p className="text-xs text-zinc-500 mt-0.5 truncate">{t.description}</p>
+                            )}
+                            <p className="text-xs text-zinc-400 mt-1">
+                              <span className="text-amber-500 font-medium">{fmt_price(t.price)}</span>
+                              <span className="text-zinc-600 mx-1">·</span>
+                              {fmt_duration(t.duration_min)}
+                            </p>
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+
+          {/* Footer de ações */}
+          <div className="px-5 py-4 border-t border-zinc-800 flex items-center justify-between gap-3 flex-wrap">
+            <button
+              onClick={toggleAllTemplates}
+              className="text-xs text-zinc-400 hover:text-zinc-200 transition-colors"
+            >
+              {selectedTemplates.size === availableTemplates.length ? 'Desmarcar todos' : 'Selecionar todos'}
+            </button>
+            <div className="flex items-center gap-3">
+              {selectedTemplates.size > 0 && (
+                <span className="text-xs text-zinc-500">
+                  {selectedTemplates.size} selecionado{selectedTemplates.size !== 1 ? 's' : ''}
+                </span>
+              )}
+              <button
+                onClick={handleAddTemplates}
+                disabled={selectedTemplates.size === 0 || addingTemplates}
+                className="flex items-center gap-2 bg-amber-500 hover:bg-amber-400 disabled:opacity-40 disabled:cursor-not-allowed text-black font-semibold px-4 py-2 rounded-lg text-sm transition-colors"
+              >
+                <Plus size={14} />
+                {addingTemplates
+                  ? 'Adicionando…'
+                  : selectedTemplates.size === 0
+                    ? 'Selecione ao menos um'
+                    : `Adicionar ${selectedTemplates.size} serviço${selectedTemplates.size !== 1 ? 's' : ''}`
+                }
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Empty state quando templates foram pulados e não há serviços */}
+      {!showTemplates && services.length === 0 && (
+        <div className="bg-zinc-900 border border-zinc-800 border-dashed rounded-xl p-10 text-center">
+          <p className="text-zinc-400 text-sm mb-3">Nenhum serviço cadastrado ainda.</p>
+          <div className="flex items-center justify-center gap-3">
+            <button
+              onClick={openCreate}
+              className="text-xs text-amber-500 hover:text-amber-400 transition-colors"
+            >
+              Criar manualmente
+            </button>
+            <span className="text-zinc-700">·</span>
+            <button
+              onClick={() => setShowTemplates(true)}
+              className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+            >
+              Ver sugestões
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Barra de filtros */}
       {services.length > 0 && (

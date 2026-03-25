@@ -29,8 +29,10 @@ src/
 │   │   ├── client.tsx              # Client: tabela de usuários, modais, toggles
 │   │   └── actions.ts              # Server Actions: updatePlan, toggleActive (adminClient)
 │   ├── book/[slug]/                # Público — página de agendamento do cliente
-│   │   ├── page.tsx                # Server: busca barbershop + services pelo slug
-│   │   └── client.tsx              # Client: fluxo 4 etapas (serviço→data→dados→ok)
+│   │   ├── page.tsx                # Server: SEO og:*/twitter + viewport PWA + manifest link
+│   │   ├── client.tsx              # Client: fluxo 4 etapas + "Adicionar ao calendário"
+│   │   └── manifest.webmanifest/
+│   │       └── route.ts            # Route Handler: manifest PWA dinâmico por slug
 │   ├── dashboard/
 │   │   ├── layout.tsx              # Server: auth guard + passa barbershop à sidebar
 │   │   ├── page.tsx                # Server: stats do dia + banner do plano
@@ -68,6 +70,7 @@ src/
 │   │   ├── server.ts               # createClient() async — server (lê cookies do Next.js)
 │   │   └── admin.ts                # adminClient — service_role, sem RLS
 │   ├── plans.ts                    # Definição dos planos + helpers de trial
+│   ├── rate-limit.ts               # Sliding window rate limiter in-memory (20 req/min/IP)
 │   └── utils.ts                    # cn(…) = clsx + tailwind-merge
 ├── types/
 │   └── database.ts                 # Todos os types: Barbershop, Service, Customer,
@@ -215,9 +218,10 @@ dashboard/layout.tsx → getUser() → sem barbershop = redirect /onboarding
 ```
 
 ### Middleware (`src/middleware.ts`)
-- Rota no matcher: `/dashboard/:path*`, `/onboarding/:path*`, `/admin/:path*`, `/login`, `/reset-password`
-- Lógica: sem user → redirect `/login`; user em `/login` → redirect `/dashboard`
-- Rotas públicas (fora do matcher): `/`, `/book/:slug*`
+- Matcher: `/book/:path*`, `/dashboard/:path*`, `/onboarding/:path*`, `/admin/:path*`, `/login`, `/reset-password`
+- `/book/*`: rate limiting 20 req/min/IP via `lib/rate-limit.ts` → retorna 429 se excedido
+- Demais rotas: init Supabase apenas quando necessário (evita overhead no /book)
+- Lógica auth: sem user → redirect `/login`; user em `/login` → redirect `/dashboard`
 
 ---
 
@@ -346,21 +350,26 @@ Classe Tailwind para todos os inputs/textareas do projeto.
 | Auth (login/cadastro/recuperação) | ✅ | Templates de e-mail configurados |
 | Onboarding 3 passos | ✅ | Cria barbershop com slug único |
 | Dashboard overview | ✅ | Stats do dia + banner de plano |
-| Agenda (dia/semana/mês) | ✅ | CRUD + bloqueios, ordenado por horário |
+| Agenda (dia/semana/mês) | ✅ | CRUD + bloqueios, ordenado por horário, botão refresh |
 | Clientes | ✅ | CRUD + VIP + busca + sort |
-| Serviços | ✅ | CRUD + categorias múltiplas + duplicatas |
-| Configurações | ✅ | Dados gerais + horários + link do Book |
-| BarberOS Book (`/book/[slug]`) | ✅ | Agendamento público em 4 etapas |
-| Relatórios | ✅ | Cards + gráficos + insights + gate por plano |
+| Serviços | ✅ | CRUD + categorias + duplicatas + templates sugeridos (bulk) |
+| Configurações | ✅ | Logo upload (Storage) + dados gerais + horários + link Book |
+| BarberOS Book (`/book/[slug]`) | ✅ | 4 etapas + "Adicionar ao calendário" + rate limiting |
+| Book SEO | ✅ | og:* + twitter:card + metadataBase |
+| Book PWA | ✅ | manifest dinâmico por slug + themeColor + appleWebApp |
+| Relatórios | ✅ | Cards+delta + recharts + insights + CSV/PDF + gate plano |
 | Planos (`/dashboard/planos`) | ✅ | Tabela comparativa + texto dinâmico |
 | Sistema de planos (`lib/plans.ts`) | ✅ | free/pro/premium com feature gates |
-| Painel Admin (`/admin`) | ✅ | Gestão de planos/trial via server actions |
+| Painel Admin (`/admin`) | ✅ | MRR/ARR + gráficos recharts + CSV + gestão de planos |
+| Rate limiting | ✅ | `lib/rate-limit.ts` + middleware para /book/* |
+| Race condition agendamentos | ✅ | Constraint `no_overlap_appointments` + erro 23P01 tratado |
 | Mobile overflow fix | ✅ | html overflow-x hidden + wrappers nas tabelas |
 
 ## O que falta (MVP)
 
 | Módulo | Prioridade | Dependências |
 |---|---|---|
-| WhatsApp Bot | Alta | Evolution API no Railway |
-| Deploy | Alta | Vercel + Railway |
-| Notificações de lembrete | Média | Bot funcionando |
+| Deploy | Alta | Vercel + Render |
+| WhatsApp Bot | Alta | Evolution API no Render (ver CHATBOT.md) |
+| Notificações de lembrete | Média | Bot funcionando + cron Vercel |
+| Arquivos estáticos PWA/SEO | Baixa | og-default.png + icons/ (criar manualmente) |

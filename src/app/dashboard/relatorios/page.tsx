@@ -1,7 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import { RelatoriosClient } from './client'
-import { subDays } from 'date-fns'
+import { subDays, subMonths } from 'date-fns'
 import { PLANS } from '@/lib/plans'
 
 export default async function RelatoriosPage() {
@@ -21,8 +21,15 @@ export default async function RelatoriosPage() {
   const defaultPeriod = PLANS[barbershop.plan as 'free' | 'pro' | 'premium'].reportPeriods[0]
   const defaultDays   = defaultPeriod === '7d' ? 7 : defaultPeriod === '30d' ? 30 : defaultPeriod === '90d' ? 90 : 365
   const start         = subDays(new Date(), defaultDays)
+  const prevStart     = subDays(new Date(), defaultDays * 2)
 
-  const [{ data: appointments }, { count: newCustomers }] = await Promise.all([
+  const [
+    { data: appointments },
+    { count: newCustomers },
+    { data: prevAppointments },
+    { count: returningCustomers },
+    { count: totalCustomers },
+  ] = await Promise.all([
     supabase
       .from('appointments_full')
       .select('id, start_time, status, source, customer_name, service_name, service_price')
@@ -34,6 +41,21 @@ export default async function RelatoriosPage() {
       .select('*', { count: 'exact', head: true })
       .eq('barbershop_id', barbershop.id)
       .gte('created_at', start.toISOString()),
+    supabase
+      .from('appointments_full')
+      .select('id, status, service_price')
+      .eq('barbershop_id', barbershop.id)
+      .gte('start_time', prevStart.toISOString())
+      .lt('start_time', start.toISOString()),
+    supabase
+      .from('customers')
+      .select('*', { count: 'exact', head: true })
+      .eq('barbershop_id', barbershop.id)
+      .gt('total_visits', 1),
+    supabase
+      .from('customers')
+      .select('*', { count: 'exact', head: true })
+      .eq('barbershop_id', barbershop.id),
   ])
 
   return (
@@ -42,11 +64,14 @@ export default async function RelatoriosPage() {
       initialAppointments={(appointments ?? []) as ReportAppt[]}
       initialNewCustomers={newCustomers ?? 0}
       initialPeriod={defaultPeriod}
+      initialPrevAppointments={(prevAppointments ?? []) as PrevAppt[]}
+      returningCustomers={returningCustomers ?? 0}
+      totalCustomers={totalCustomers ?? 0}
     />
   )
 }
 
-// type shared with client
+// types shared with client
 export interface ReportAppt {
   id: string
   start_time: string
@@ -54,5 +79,11 @@ export interface ReportAppt {
   source: string
   customer_name: string | null
   service_name: string | null
+  service_price: number | null
+}
+
+export interface PrevAppt {
+  id: string
+  status: string
   service_price: number | null
 }
