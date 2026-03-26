@@ -24,8 +24,41 @@ export interface Barbershop {
   subscription_ends_at: string | null
   subscription_period: SubscriptionPeriod | null
   grace_period_days: number | null
+  referral_code: string | null
+  referred_by: string | null
+  referral_bonus_ends_at: string | null
   created_at: string
   updated_at: string
+}
+
+export interface LoyaltyProgram {
+  id: string
+  barbershop_id: string
+  is_active: boolean
+  visits_required: number
+  reward_description: string
+  created_at: string
+  updated_at: string
+}
+
+export interface LoyaltyReward {
+  id: string
+  barbershop_id: string
+  customer_id: string
+  visits_at_redemption: number
+  notes: string | null
+  redeemed_at: string
+}
+
+export type ReferralStatus = 'pending' | 'qualified' | 'rewarded'
+
+export interface Referral {
+  id: string
+  referrer_barbershop_id: string | null
+  referred_barbershop_id: string | null
+  status: ReferralStatus
+  reward_granted_at: string | null
+  created_at: string
 }
 
 export interface WorkingHours {

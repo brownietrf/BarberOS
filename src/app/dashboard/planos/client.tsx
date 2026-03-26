@@ -7,12 +7,14 @@ import {
   isSubscriptionExpired, subscriptionDaysLeft, getSubscriptionPrice,
 } from '@/lib/plans'
 import type { Barbershop, Plan, SubscriptionPeriod } from '@/types/database'
-import { Check, X, Sparkles, Zap, Crown, Clock, ArrowLeft, AlertTriangle, Tag, RefreshCw, CheckCircle } from 'lucide-react'
+import { Check, X, Sparkles, Zap, Crown, Clock, ArrowLeft, AlertTriangle, Tag, RefreshCw, CheckCircle, Copy, Gift, Users } from 'lucide-react'
 import Link from 'next/link'
 import { updateSubscriptionPeriod } from './actions'
+import type { Referral } from '@/types/database'
 
 interface Props {
   barbershop: Barbershop
+  referrals: Referral[]
 }
 
 const PLAN_ORDER: Plan[] = ['free', 'pro', 'premium']
@@ -25,7 +27,7 @@ const PLAN_ICON = {
 
 const PERIOD_ORDER: SubscriptionPeriod[] = ['monthly', '3months', '6months', '12months']
 
-export function PlanosClient({ barbershop }: Props) {
+export function PlanosClient({ barbershop, referrals }: Props) {
   const plan        = barbershop.plan
   const trialActive = isTrialActive(barbershop)
   const trialExpd   = isTrialExpired(barbershop)
@@ -266,6 +268,9 @@ export function PlanosClient({ barbershop }: Props) {
       {/* Texto de vantagens dinâmico */}
       <AdvantagesSection plan={plan} barbershopName={barbershop.name} trialActive={trialActive} daysLeft={daysLeft} />
 
+      {/* Programa de indicação */}
+      <ReferralSection barbershop={barbershop} referrals={referrals} />
+
     </div>
   )
 }
@@ -355,6 +360,106 @@ function CurrentPlanBanner({ plan, trialActive, trialExpired, daysLeft, subExpir
           }
         </p>
       </div>
+    </div>
+  )
+}
+
+// ─── Seção de indicação ────────────────────────────────────────────────────────
+
+function ReferralSection({ barbershop, referrals }: { barbershop: Barbershop; referrals: Referral[] }) {
+  const [copied, setCopied] = useState(false)
+  const code = barbershop.referral_code
+
+  const bonusActive = barbershop.referral_bonus_ends_at
+    && new Date(barbershop.referral_bonus_ends_at) > new Date()
+
+  const bonusDays = bonusActive
+    ? Math.ceil((new Date(barbershop.referral_bonus_ends_at!).getTime() - Date.now()) / 86_400_000)
+    : 0
+
+  function handleCopy() {
+    if (!code) return
+    navigator.clipboard.writeText(code)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  const qualifiedCount = referrals.filter(r => r.status === 'qualified' || r.status === 'rewarded').length
+  const pendingCount   = referrals.filter(r => r.status === 'pending').length
+
+  return (
+    <div className="mt-6 bg-zinc-900 border border-zinc-800 rounded-2xl p-6 md:p-8">
+      <div className="flex items-center gap-2 mb-5">
+        <Gift size={16} className="text-amber-500" />
+        <h2 className="text-base font-semibold text-white">Programa de Indicação</h2>
+      </div>
+
+      <p className="text-sm text-zinc-400 mb-5 leading-relaxed">
+        Indique o BarberOS para outros barbeiros. Quando o indicado <strong className="text-white">assinar um plano pago</strong>, você ganha <strong className="text-amber-400">1 mês grátis</strong> no seu plano atual.
+      </p>
+
+      {/* Bônus ativo */}
+      {bonusActive && (
+        <div className="mb-5 bg-amber-500/5 border border-amber-500/20 rounded-xl px-4 py-3 flex items-center gap-3">
+          <CheckCircle size={16} className="text-amber-400 shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-amber-400">Bônus de indicação ativo!</p>
+            <p className="text-xs text-zinc-500 mt-0.5">
+              Você tem <strong className="text-zinc-300">{bonusDays} dias</strong> grátis aplicados ao seu plano.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Código de indicação */}
+      <div className="flex flex-col gap-1.5 mb-5">
+        <p className="text-xs text-zinc-500">Seu código de indicação</p>
+        {code ? (
+          <div className="flex items-center gap-2">
+            <div className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2.5 font-mono text-sm text-amber-400 tracking-widest select-all">
+              {code}
+            </div>
+            <button
+              onClick={handleCopy}
+              className="flex items-center gap-1.5 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-300 text-sm px-3 py-2.5 rounded-lg transition-colors whitespace-nowrap"
+            >
+              {copied
+                ? <><CheckCircle size={14} className="text-green-400" /> Copiado</>
+                : <><Copy size={14} /> Copiar</>
+              }
+            </button>
+          </div>
+        ) : (
+          <p className="text-xs text-zinc-600 italic">Código gerado automaticamente no cadastro.</p>
+        )}
+        <p className="text-xs text-zinc-600">Compartilhe este código com outros barbeiros ao indicar o BarberOS.</p>
+      </div>
+
+      {/* Stats de indicações */}
+      {referrals.length > 0 && (
+        <div className="grid grid-cols-3 gap-3">
+          <div className="bg-zinc-800 rounded-xl p-3 text-center">
+            <div className="text-xl font-bold text-white">{referrals.length}</div>
+            <div className="text-xs text-zinc-500 mt-0.5 flex items-center justify-center gap-1">
+              <Users size={10} /> Indicados
+            </div>
+          </div>
+          <div className="bg-zinc-800 rounded-xl p-3 text-center">
+            <div className="text-xl font-bold text-amber-400">{qualifiedCount}</div>
+            <div className="text-xs text-zinc-500 mt-0.5">Assinaram</div>
+          </div>
+          <div className="bg-zinc-800 rounded-xl p-3 text-center">
+            <div className="text-xl font-bold text-zinc-400">{pendingCount}</div>
+            <div className="text-xs text-zinc-500 mt-0.5">Pendentes</div>
+          </div>
+        </div>
+      )}
+
+      {referrals.length === 0 && (
+        <div className="bg-zinc-800/50 border border-zinc-700 border-dashed rounded-xl p-5 text-center">
+          <p className="text-zinc-500 text-sm">Você ainda não tem indicações. Compartilhe seu código!</p>
+        </div>
+      )}
     </div>
   )
 }

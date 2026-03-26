@@ -25,6 +25,8 @@ import {
   ChevronsUpDown,
   Timer,
   Lock,
+  Gift,
+  ArrowRight,
 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import {
@@ -33,8 +35,8 @@ import {
   isFullyLocked, gracePeriodDaysLeft, GRACE_PERIOD_DAYS,
 } from '@/lib/plans'
 import type { SubscriptionPeriod } from '@/types/database'
-import { updatePlan, toggleActive } from './actions'
-import type { AdminBarbershop } from './page'
+import { updatePlan, toggleActive, grantReferralBonus } from './actions'
+import type { AdminBarbershop, AdminReferral } from './page'
 import type { Plan } from '@/types/database'
 import {
   BarChart,
@@ -54,6 +56,7 @@ import {
 interface Props {
   barbershops: AdminBarbershop[]
   adminEmail: string
+  referrals: AdminReferral[]
 }
 
 type SortKey = 'name' | 'plan' | 'subscription' | 'created_at'
@@ -79,7 +82,7 @@ const PIE_COLORS = {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export function AdminClient({ barbershops: initial, adminEmail }: Props) {
+export function AdminClient({ barbershops: initial, adminEmail, referrals: initialReferrals }: Props) {
   const supabase = createClient()
   const router   = useRouter()
 
@@ -100,6 +103,14 @@ export function AdminClient({ barbershops: initial, adminEmail }: Props) {
   const [editSubEndsAt, setEditSubEndsAt]               = useState('')
   const [editSubPeriod, setEditSubPeriod]               = useState<SubscriptionPeriod | ''>('')
   const [editGraceDays, setEditGraceDays]               = useState<string>('')
+
+  // Referrals state
+  const [referrals, setReferrals]                       = useState(initialReferrals)
+  const [bonusTarget, setBonusTarget]                   = useState<AdminReferral | null>(null)
+  const [bonusType, setBonusType]                       = useState<'free_month' | 'plan_upgrade'>('free_month')
+  const [bonusUpgradePlan, setBonusUpgradePlan]         = useState<'pro' | 'premium'>('pro')
+  const [bonusSaving, setBonusSaving]                   = useState(false)
+  const [bonusError, setBonusError]                     = useState('')
 
   // ── Computed stats ──────────────────────────────────────────────────────
 
@@ -289,6 +300,26 @@ export function AdminClient({ barbershops: initial, adminEmail }: Props) {
   async function handleLogout() {
     await supabase.auth.signOut()
     router.push('/login')
+  }
+
+  async function handleGrantBonus() {
+    if (!bonusTarget) return
+    setBonusSaving(true)
+    setBonusError('')
+    const { error } = await grantReferralBonus(
+      bonusTarget.id,
+      bonusTarget.referrer_barbershop_id!,
+      bonusType,
+      bonusType === 'plan_upgrade' ? bonusUpgradePlan : undefined,
+    )
+    if (error) { setBonusError(error); setBonusSaving(false); return }
+    setReferrals(prev => prev.map(r =>
+      r.id === bonusTarget.id
+        ? { ...r, status: 'rewarded', reward_granted_at: new Date().toISOString() }
+        : r
+    ))
+    setBonusTarget(null)
+    setBonusSaving(false)
   }
 
   function exportCSV() {
@@ -489,6 +520,104 @@ export function AdminClient({ barbershops: initial, adminEmail }: Props) {
               </>
             )}
           </div>
+        </div>
+
+        {/* Referrals section */}
+        <div className="mb-8">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-base font-semibold text-white flex items-center gap-2">
+                <Gift size={16} className="text-amber-400" /> Indicações
+              </h2>
+              <p className="text-xs text-zinc-500 mt-0.5">
+                {referrals.length} indicaç{referrals.length !== 1 ? 'ões' : 'ão'} registrada{referrals.length !== 1 ? 's' : ''} —&nbsp;
+                {referrals.filter(r => r.status === 'qualified').length} qualificada{referrals.filter(r => r.status === 'qualified').length !== 1 ? 's' : ''} aguardando bônus
+              </p>
+            </div>
+          </div>
+
+          {referrals.length === 0 ? (
+            <div className="bg-zinc-900 border border-zinc-800 rounded-xl px-5 py-8 text-center text-zinc-500 text-sm">
+              Nenhuma indicação registrada ainda.
+            </div>
+          ) : (
+            <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+              <div className="overflow-x-auto">
+                <div className="min-w-[640px]">
+                  {/* Header */}
+                  <div className="grid grid-cols-[1fr_1fr_90px_110px_110px_80px] gap-3 px-5 py-3 border-b border-zinc-800 bg-zinc-800/30">
+                    <span className="text-xs font-medium text-zinc-500">Indicador</span>
+                    <span className="text-xs font-medium text-zinc-500">Indicado</span>
+                    <span className="text-xs font-medium text-zinc-500">Plano</span>
+                    <span className="text-xs font-medium text-zinc-500">Status</span>
+                    <span className="text-xs font-medium text-zinc-500">Data</span>
+                    <span className="text-xs font-medium text-zinc-500 text-center">Bônus</span>
+                  </div>
+                  {/* Rows */}
+                  <div className="divide-y divide-zinc-800">
+                    {referrals.map(r => (
+                      <div key={r.id} className="grid grid-cols-[1fr_1fr_90px_110px_110px_80px] gap-3 px-5 py-3.5 hover:bg-zinc-800/20 transition-colors items-center">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <p className="text-sm text-white truncate">{r.referrer_name}</p>
+                        </div>
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <ArrowRight size={12} className="text-zinc-600 shrink-0" />
+                          <p className="text-sm text-zinc-300 truncate">{r.referred_name}</p>
+                        </div>
+                        <span className={cn(
+                          'text-xs px-2 py-1 rounded-full border font-medium w-fit',
+                          PLAN_BADGE[r.referred_plan]
+                        )}>
+                          {PLANS[r.referred_plan].label}
+                        </span>
+                        <div>
+                          {r.status === 'pending' && (
+                            <span className="flex items-center gap-1 text-xs text-yellow-400">
+                              <Clock size={11} /> Pendente
+                            </span>
+                          )}
+                          {r.status === 'qualified' && (
+                            <span className="flex items-center gap-1 text-xs text-blue-400">
+                              <CheckCircle2 size={11} /> Qualificada
+                            </span>
+                          )}
+                          {r.status === 'rewarded' && (
+                            <span className="flex items-center gap-1 text-xs text-green-400">
+                              <Gift size={11} /> Bonificada
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-zinc-500">
+                          {new Date(r.created_at).toLocaleDateString('pt-BR')}
+                        </p>
+                        <div className="flex justify-center">
+                          {r.status === 'qualified' ? (
+                            <button
+                              onClick={() => {
+                                setBonusTarget(r)
+                                setBonusType('free_month')
+                                setBonusUpgradePlan(r.referred_plan === 'premium' ? 'premium' : 'pro')
+                                setBonusError('')
+                              }}
+                              className="flex items-center gap-1 text-xs text-amber-400 hover:text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 px-2.5 py-1 rounded-lg transition-colors"
+                            >
+                              <Gift size={11} /> Dar
+                            </button>
+                          ) : r.status === 'rewarded' ? (
+                            <span className="text-xs text-zinc-600" title={r.reward_granted_at ? new Date(r.reward_granted_at).toLocaleDateString('pt-BR') : ''}>
+                              ✓
+                            </span>
+                          ) : (
+                            <span className="text-xs text-zinc-700">—</span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Filters + CSV export */}
@@ -846,6 +975,106 @@ export function AdminClient({ barbershops: initial, adminEmail }: Props) {
                   className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-semibold text-sm transition-colors disabled:opacity-50"
                 >
                   {saving ? 'Salvando…' : 'Salvar'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bonus grant modal */}
+      {bonusTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setBonusTarget(null)} />
+          <div className="relative bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-sm p-6 shadow-2xl">
+
+            <div className="flex items-start justify-between mb-5">
+              <div>
+                <h2 className="text-base font-semibold text-white flex items-center gap-2">
+                  <Gift size={16} className="text-amber-400" /> Conceder bônus
+                </h2>
+                <p className="text-xs text-zinc-500 mt-0.5">
+                  Para <span className="text-white">{bonusTarget.referrer_name}</span> por indicar {bonusTarget.referred_name}
+                </p>
+              </div>
+              <button onClick={() => setBonusTarget(null)} className="text-zinc-500 hover:text-zinc-200 transition-colors">
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              {/* Bonus type */}
+              <div>
+                <label className="text-xs font-medium text-zinc-400 block mb-2">Tipo de bônus</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => setBonusType('free_month')}
+                    className={cn(
+                      'py-3 px-3 rounded-xl border text-xs font-medium transition-all text-left',
+                      bonusType === 'free_month'
+                        ? 'bg-amber-500 border-amber-500 text-black'
+                        : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:border-zinc-500'
+                    )}
+                  >
+                    <div className="font-semibold">Mês grátis</div>
+                    <div className="text-[10px] opacity-70 mt-0.5">+30 dias na assinatura atual</div>
+                  </button>
+                  <button
+                    onClick={() => setBonusType('plan_upgrade')}
+                    className={cn(
+                      'py-3 px-3 rounded-xl border text-xs font-medium transition-all text-left',
+                      bonusType === 'plan_upgrade'
+                        ? 'bg-amber-500 border-amber-500 text-black'
+                        : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:border-zinc-500'
+                    )}
+                  >
+                    <div className="font-semibold">Upgrade de plano</div>
+                    <div className="text-[10px] opacity-70 mt-0.5">Sobe de plano por 30 dias</div>
+                  </button>
+                </div>
+              </div>
+
+              {/* Upgrade plan selector */}
+              {bonusType === 'plan_upgrade' && (
+                <div>
+                  <label className="text-xs font-medium text-zinc-400 block mb-2">Plano de destino</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {(['pro', 'premium'] as const).map(p => (
+                      <button
+                        key={p}
+                        onClick={() => setBonusUpgradePlan(p)}
+                        className={cn(
+                          'py-2.5 rounded-xl border text-xs font-medium transition-all',
+                          bonusUpgradePlan === p
+                            ? 'bg-amber-500 border-amber-500 text-black'
+                            : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:border-zinc-500'
+                        )}
+                      >
+                        <div>{PLANS[p].label}</div>
+                        <div className="text-[10px] opacity-70 mt-0.5">{PLANS[p].price}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {bonusError && (
+                <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{bonusError}</p>
+              )}
+
+              <div className="flex gap-2 pt-1">
+                <button
+                  onClick={() => setBonusTarget(null)}
+                  className="flex-1 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-sm transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleGrantBonus}
+                  disabled={bonusSaving || !bonusTarget.referrer_barbershop_id}
+                  className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-black font-semibold text-sm transition-colors disabled:opacity-50"
+                >
+                  {bonusSaving ? 'Salvando…' : 'Confirmar'}
                 </button>
               </div>
             </div>

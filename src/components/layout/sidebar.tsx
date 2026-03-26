@@ -14,6 +14,7 @@ import {
   Menu,
   X,
   BarChart2,
+  Gift,
 } from 'lucide-react'
 import { useState } from 'react'
 
@@ -43,6 +44,11 @@ const navItems = [
     label: 'Relatórios',
     href: '/dashboard/relatorios',
     icon: BarChart2,
+  },
+  {
+    label: 'Fidelidade',
+    href: '/dashboard/fidelidade',
+    icon: Gift,
   },
   {
     label: 'Configurações',
