@@ -1,10 +1,15 @@
 'use client'
 
+import { useState } from 'react'
 import { cn } from '@/lib/utils'
-import { PLANS, isTrialActive, isTrialExpired, trialDaysLeft } from '@/lib/plans'
-import type { Barbershop, Plan } from '@/types/database'
-import { Check, X, Sparkles, Zap, Crown, Clock, ArrowLeft } from 'lucide-react'
+import {
+  PLANS, BILLING_PERIODS, isTrialActive, isTrialExpired, trialDaysLeft,
+  isSubscriptionExpired, subscriptionDaysLeft, getSubscriptionPrice,
+} from '@/lib/plans'
+import type { Barbershop, Plan, SubscriptionPeriod } from '@/types/database'
+import { Check, X, Sparkles, Zap, Crown, Clock, ArrowLeft, AlertTriangle, Tag, RefreshCw, CheckCircle } from 'lucide-react'
 import Link from 'next/link'
+import { updateSubscriptionPeriod } from './actions'
 
 interface Props {
   barbershop: Barbershop
@@ -18,11 +23,39 @@ const PLAN_ICON = {
   premium: { icon: Crown,    color: 'text-amber-400', bg: 'bg-amber-500/10' },
 }
 
+const PERIOD_ORDER: SubscriptionPeriod[] = ['monthly', '3months', '6months', '12months']
+
 export function PlanosClient({ barbershop }: Props) {
   const plan        = barbershop.plan
   const trialActive = isTrialActive(barbershop)
   const trialExpd   = isTrialExpired(barbershop)
   const daysLeft    = trialDaysLeft(barbershop)
+  const subExpired  = isSubscriptionExpired(barbershop)
+  const subDays     = subscriptionDaysLeft(barbershop)
+
+  const [selectedPeriod, setSelectedPeriod] = useState<SubscriptionPeriod>(
+    (barbershop.subscription_period as SubscriptionPeriod) ?? 'monthly'
+  )
+  const [saving, setSaving]       = useState(false)
+  const [saved, setSaved]         = useState(false)
+  const [saveError, setSaveError] = useState('')
+
+  const currentPeriod = (barbershop.subscription_period as SubscriptionPeriod) ?? 'monthly'
+  const periodChanged = plan !== 'free' && !subExpired && selectedPeriod !== currentPeriod
+
+  async function handlePeriodChange() {
+    if (!periodChanged) return
+    setSaving(true)
+    setSaveError('')
+    const { error } = await updateSubscriptionPeriod(selectedPeriod)
+    if (error) {
+      setSaveError(error)
+    } else {
+      setSaved(true)
+      setTimeout(() => setSaved(false), 3000)
+    }
+    setSaving(false)
+  }
 
   return (
     <div className="max-w-5xl mx-auto">
@@ -34,19 +67,99 @@ export function PlanosClient({ barbershop }: Props) {
         </Link>
         <h1 className="text-2xl font-bold text-white">Planos BarberOS</h1>
         <p className="text-zinc-400 text-sm mt-1">
-          Escolha o plano ideal para a sua barbearia
+          Escolha o plano e período ideal para a sua barbearia
         </p>
       </div>
 
       {/* Status atual */}
-      <CurrentPlanBanner plan={plan} trialActive={trialActive} trialExpired={trialExpd} daysLeft={daysLeft} />
+      <CurrentPlanBanner
+        plan={plan}
+        trialActive={trialActive}
+        trialExpired={trialExpd}
+        daysLeft={daysLeft}
+        subExpired={subExpired}
+        subDays={subDays}
+        subEndsAt={barbershop.subscription_ends_at}
+        subPeriod={barbershop.subscription_period}
+      />
+
+      {/* Seletor de período — visível para todos */}
+      <div className="mb-6">
+        <div className="flex items-center justify-between mb-3">
+          <p className="text-xs text-zinc-500">Período de cobrança</p>
+          {plan !== 'free' && !subExpired && (
+            <p className="text-xs text-zinc-600">Período atual: <span className="text-zinc-400">{BILLING_PERIODS[currentPeriod].label}</span></p>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {PERIOD_ORDER.map(p => {
+            const def = BILLING_PERIODS[p]
+            return (
+              <button
+                key={p}
+                onClick={() => setSelectedPeriod(p)}
+                className={cn(
+                  'relative flex items-center gap-2 px-4 py-2 rounded-xl border text-sm font-medium transition-all',
+                  selectedPeriod === p
+                    ? 'bg-amber-500 border-amber-500 text-black'
+                    : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:border-zinc-600'
+                )}
+              >
+                {def.label}
+                {def.discount > 0 && (
+                  <span className={cn(
+                    'text-[10px] font-bold px-1.5 py-0.5 rounded-full',
+                    selectedPeriod === p ? 'bg-black/20 text-black' : 'bg-green-500/15 text-green-400'
+                  )}>
+                    -{def.discount}%
+                  </span>
+                )}
+              </button>
+            )
+          })}
+        </div>
+
+        {/* Change period button for paid active subscribers */}
+        {periodChanged && (
+          <div className="mt-4 flex items-center gap-3 bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-3">
+            <div className="flex-1">
+              <p className="text-sm text-white font-medium">Alterar período de cobrança</p>
+              <p className="text-xs text-zinc-500 mt-0.5">
+                Mudança para <strong className="text-zinc-300">{BILLING_PERIODS[selectedPeriod].label}</strong> entra em vigor no próximo ciclo ({barbershop.subscription_ends_at ? new Date(barbershop.subscription_ends_at).toLocaleDateString('pt-BR') : '—'})
+              </p>
+            </div>
+            {saved ? (
+              <span className="flex items-center gap-1.5 text-xs text-green-400">
+                <CheckCircle size={14} /> Salvo
+              </span>
+            ) : (
+              <button
+                onClick={handlePeriodChange}
+                disabled={saving}
+                className="flex items-center gap-1.5 text-xs bg-amber-500 hover:bg-amber-400 text-black font-semibold px-4 py-2 rounded-lg transition-colors disabled:opacity-50 whitespace-nowrap"
+              >
+                <RefreshCw size={13} className={saving ? 'animate-spin' : ''} />
+                {saving ? 'Salvando…' : 'Confirmar'}
+              </button>
+            )}
+          </div>
+        )}
+        {saveError && (
+          <p className="mt-2 text-xs text-red-400">{saveError}</p>
+        )}
+      </div>
 
       {/* Cards de planos */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-10">
         {PLAN_ORDER.map(p => {
-          const def     = PLANS[p]
+          const def       = PLANS[p]
           const isCurrent = p === plan
-          const Icon    = PLAN_ICON[p].icon
+          const Icon      = PLAN_ICON[p].icon
+
+          // Pricing for paid plans with period discount
+          const pricing = p !== 'free'
+            ? getSubscriptionPrice(p as 'pro' | 'premium', selectedPeriod)
+            : null
 
           return (
             <div
@@ -84,8 +197,31 @@ export function PlanosClient({ barbershop }: Props) {
 
               {/* Price */}
               <div className="mb-5">
-                <span className="text-3xl font-bold text-white">{def.price}</span>
-                <span className="text-zinc-500 text-sm ml-1">{def.priceNote}</span>
+                {pricing ? (
+                  <>
+                    <div className="flex items-baseline gap-1.5">
+                      <span className="text-3xl font-bold text-white">
+                        R$ {pricing.perMonth.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      </span>
+                      <span className="text-zinc-500 text-sm">/mês</span>
+                    </div>
+                    {selectedPeriod !== 'monthly' && (
+                      <div className="mt-1 flex items-center gap-2">
+                        <span className="text-xs text-zinc-500">
+                          Total: R$ {pricing.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} em {BILLING_PERIODS[selectedPeriod].months}x
+                        </span>
+                        <span className="text-[10px] font-bold bg-green-500/15 text-green-400 px-1.5 py-0.5 rounded-full flex items-center gap-1">
+                          <Tag size={9} /> {pricing.discount}% off
+                        </span>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <span className="text-3xl font-bold text-white">{def.price}</span>
+                    <span className="text-zinc-500 text-sm ml-1">{def.priceNote}</span>
+                  </>
+                )}
               </div>
 
               {/* Features */}
@@ -136,11 +272,15 @@ export function PlanosClient({ barbershop }: Props) {
 
 // ─── Banner do plano atual ─────────────────────────────────────────────────────
 
-function CurrentPlanBanner({ plan, trialActive, trialExpired, daysLeft }: {
+function CurrentPlanBanner({ plan, trialActive, trialExpired, daysLeft, subExpired, subDays, subEndsAt, subPeriod }: {
   plan: Plan
   trialActive: boolean
   trialExpired: boolean
   daysLeft: number
+  subExpired: boolean
+  subDays: number
+  subEndsAt: string | null
+  subPeriod: SubscriptionPeriod | null
 }) {
   if (plan === 'free' && trialActive) {
     return (
@@ -180,8 +320,23 @@ function CurrentPlanBanner({ plan, trialActive, trialExpired, daysLeft }: {
     )
   }
 
-  const def  = PLANS[plan]
-  const Icon = PLAN_ICON[plan].icon
+  // Paid plan — expired
+  if (subExpired) {
+    return (
+      <div className="mb-8 bg-red-500/5 border border-red-500/20 rounded-xl px-5 py-4 flex items-center gap-3">
+        <AlertTriangle size={18} className="text-red-400 shrink-0" />
+        <div>
+          <p className="text-sm font-medium text-red-400">Assinatura expirada</p>
+          <p className="text-zinc-500 text-xs mt-0.5">Renove para reativar relatórios e edição de serviços.</p>
+        </div>
+      </div>
+    )
+  }
+
+  const def        = PLANS[plan]
+  const Icon       = PLAN_ICON[plan].icon
+  const renewDate  = subEndsAt ? new Date(subEndsAt).toLocaleDateString('pt-BR') : null
+  const periodLabel = subPeriod ? BILLING_PERIODS[subPeriod].label : null
 
   return (
     <div className="mb-8 bg-zinc-900 border border-zinc-800 rounded-xl px-5 py-4 flex items-center gap-3">
@@ -189,8 +344,16 @@ function CurrentPlanBanner({ plan, trialActive, trialExpired, daysLeft }: {
         <Icon size={16} className={PLAN_ICON[plan].color} />
       </div>
       <div>
-        <p className="text-sm font-medium text-white">Você está no plano <strong className={plan === 'premium' ? 'text-amber-400' : 'text-blue-400'}>{def.label}</strong></p>
-        <p className="text-zinc-500 text-xs mt-0.5">{def.price} {def.priceNote}</p>
+        <p className="text-sm font-medium text-white">
+          Você está no plano <strong className={plan === 'premium' ? 'text-amber-400' : 'text-blue-400'}>{def.label}</strong>
+          {periodLabel && <span className="text-zinc-500 font-normal"> · {periodLabel}</span>}
+        </p>
+        <p className="text-zinc-500 text-xs mt-0.5">
+          {renewDate
+            ? `Renova em ${renewDate} — ${subDays} dia${subDays !== 1 ? 's' : ''} restante${subDays !== 1 ? 's' : ''}`
+            : `${def.price} ${def.priceNote}`
+          }
+        </p>
       </div>
     </div>
   )

@@ -1,4 +1,5 @@
 export type Plan = 'free' | 'pro' | 'premium'
+export type SubscriptionPeriod = 'monthly' | '3months' | '6months' | '12months'
 export type ServiceCategory = 'Cabelo' | 'Barba' | 'Combo' | 'Químicas' | 'Extra'
 export type AppointmentStatus = 'pending' | 'confirmed' | 'cancelled' | 'completed' | 'no_show'
 export type AppointmentSource = 'whatsapp' | 'web' | 'manual'
@@ -20,6 +21,9 @@ export interface Barbershop {
   is_active: boolean
   plan: Plan
   trial_ends_at: string
+  subscription_ends_at: string | null
+  subscription_period: SubscriptionPeriod | null
+  grace_period_days: number | null
   created_at: string
   updated_at: string
 }

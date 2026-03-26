@@ -37,7 +37,10 @@ export async function middleware(request: NextRequest) {
     pathname === '/login' ||
     pathname === '/reset-password'
   ) {
-    let supabaseResponse = NextResponse.next({ request })
+    // Inject current pathname so Server Component layouts can read it
+    const requestHeaders = new Headers(request.headers)
+    requestHeaders.set('x-pathname', pathname)
+    let supabaseResponse = NextResponse.next({ request: { headers: requestHeaders } })
 
     const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -47,8 +50,10 @@ export async function middleware(request: NextRequest) {
           getAll() { return request.cookies.getAll() },
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           setAll(cookiesToSet: { name: string; value: string; options?: any }[]) {
+            // Keep x-pathname when rebuilding the response for cookie refresh
+            cookiesToSet.forEach(({ name, value }) => requestHeaders.set(`cookie-${name}`, value))
             cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value))
-            supabaseResponse = NextResponse.next({ request })
+            supabaseResponse = NextResponse.next({ request: { headers: requestHeaders } })
             cookiesToSet.forEach(({ name, value, options }) =>
               supabaseResponse.cookies.set(name, value, options)
             )

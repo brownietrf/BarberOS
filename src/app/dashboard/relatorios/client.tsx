@@ -8,10 +8,10 @@ import { ptBR } from 'date-fns/locale'
 import {
   TrendingUp, TrendingDown,
   Users, CalendarDays, DollarSign, BarChart2, Zap,
-  Download, FileText, Receipt, RefreshCcw,
+  Download, FileText, Receipt, RefreshCcw, Lock,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { PLANS } from '@/lib/plans'
+import { PLANS, isSubscriptionExpired, gracePeriodDaysLeft, GRACE_PERIOD_DAYS } from '@/lib/plans'
 import type { LucideIcon } from 'lucide-react'
 import type { ReportAppt, PrevAppt } from './page'
 import {
@@ -394,6 +394,43 @@ export function RelatoriosClient({
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
+
+  const subExpired = isSubscriptionExpired(barbershop)
+  const graceDays  = gracePeriodDaysLeft(barbershop)
+
+  if (subExpired) {
+    return (
+      <div className="max-w-5xl mx-auto">
+        <div className="mb-8">
+          <h1 className="text-2xl font-bold text-white">Relatórios</h1>
+          <p className="text-zinc-400 text-sm mt-1">Análise de desempenho da {barbershop.name}</p>
+        </div>
+        <div className="flex flex-col items-center justify-center gap-5 bg-zinc-900 border border-zinc-800 rounded-2xl py-20 px-6 text-center">
+          <div className="w-14 h-14 rounded-2xl bg-zinc-800 flex items-center justify-center">
+            <Lock size={24} className="text-zinc-500" />
+          </div>
+          <div>
+            <p className="text-white font-semibold text-lg mb-1">Relatórios suspensos</p>
+            {graceDays > 0 ? (
+              <p className="text-orange-400 text-sm max-w-sm">
+                Você tem <strong>{graceDays} dia{graceDays !== 1 ? 's' : ''}</strong> para regularizar antes de perder acesso completo à plataforma.
+              </p>
+            ) : (
+              <p className="text-zinc-500 text-sm max-w-sm">
+                Sua assinatura expirou e o período de carência de {GRACE_PERIOD_DAYS} dias foi encerrado.
+              </p>
+            )}
+          </div>
+          <a
+            href="/dashboard/planos"
+            className="text-sm bg-amber-500 hover:bg-amber-400 text-black font-semibold px-6 py-2.5 rounded-xl transition-colors"
+          >
+            Renovar assinatura
+          </a>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="max-w-5xl mx-auto">

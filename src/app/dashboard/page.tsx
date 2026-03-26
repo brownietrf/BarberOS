@@ -1,7 +1,11 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import { CalendarDays, Users, Scissors, TrendingUp, Clock, Zap, Crown, AlertTriangle } from 'lucide-react'
-import { isTrialActive, isTrialExpired, trialDaysLeft, PLANS } from '@/lib/plans'
+import {
+  isTrialExpired, trialDaysLeft, PLANS,
+  subscriptionDaysLeft, isSubscriptionExpiring,
+  isGracePeriod, gracePeriodDaysLeft, GRACE_PERIOD_DAYS,
+} from '@/lib/plans'
 import type { Plan } from '@/types/database'
 
 export default async function DashboardPage() {
@@ -89,8 +93,11 @@ export default async function DashboardPage() {
   ]
 
   const daysLeft    = trialDaysLeft(barbershop)
-  const trialActive = isTrialActive(barbershop)
   const trialExpd   = isTrialExpired(barbershop)
+  const subExpiring = isSubscriptionExpiring(barbershop)
+  const subDays     = subscriptionDaysLeft(barbershop)
+  const inGrace     = isGracePeriod(barbershop)
+  const graceDays   = gracePeriodDaysLeft(barbershop)
 
   return (
     <div className="max-w-5xl mx-auto">
@@ -106,7 +113,16 @@ export default async function DashboardPage() {
       </div>
 
       {/* Plan status banner */}
-      <PlanBanner plan={barbershop.plan as Plan} trialActive={trialActive} trialExpired={trialExpd} daysLeft={daysLeft} />
+      <PlanBanner
+        plan={barbershop.plan as Plan}
+        trialExpired={trialExpd}
+        daysLeft={daysLeft}
+        subExpiring={subExpiring}
+        subDays={subDays}
+        subEndsAt={barbershop.subscription_ends_at}
+        inGrace={inGrace}
+        graceDays={graceDays}
+      />
 
       {/* Stats grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
@@ -185,26 +201,29 @@ export default async function DashboardPage() {
 
 // ─── Plan Banner ──────────────────────────────────────────────────────────────
 
-function PlanBanner({ plan, trialActive, trialExpired, daysLeft }: {
+function PlanBanner({ plan, trialExpired, daysLeft, subExpiring, subDays, subEndsAt, inGrace, graceDays }: {
   plan: Plan
-  trialActive: boolean
   trialExpired: boolean
   daysLeft: number
+  subExpiring: boolean
+  subDays: number
+  subEndsAt: string | null
+  inGrace: boolean
+  graceDays: number
 }) {
   const def = PLANS[plan]
 
-  // Free trial — urgência
+  // Free trial
   if (plan === 'free') {
-    const urgent  = daysLeft <= 3
-    const warning = daysLeft <= 7
-    const color   = urgent ? 'border-red-500/25 bg-red-500/5' : warning ? 'border-orange-500/25 bg-orange-500/5' : 'border-amber-500/20 bg-amber-500/5'
+    const urgent    = daysLeft <= 3
+    const warning   = daysLeft <= 7
+    const color     = urgent ? 'border-red-500/25 bg-red-500/5' : warning ? 'border-orange-500/25 bg-orange-500/5' : 'border-amber-500/20 bg-amber-500/5'
     const textColor = urgent ? 'text-red-400' : warning ? 'text-orange-400' : 'text-amber-400'
-    const Icon = Clock
 
     return (
       <div className={`mb-6 border rounded-xl px-5 py-4 flex items-center justify-between gap-4 flex-wrap ${color}`}>
         <div className="flex items-center gap-3">
-          <Icon size={16} className={textColor} />
+          <Clock size={16} className={textColor} />
           <div>
             <p className={`text-sm font-medium ${textColor}`}>
               {trialExpired
@@ -228,10 +247,56 @@ function PlanBanner({ plan, trialActive, trialExpired, daysLeft }: {
     )
   }
 
-  // Plano pago
-  const Icon = plan === 'premium' ? Crown : Zap
-  const iconColor = plan === 'premium' ? 'text-amber-400' : 'text-blue-400'
+  // Plano pago — período de carência (expirado mas ainda dentro dos 10 dias)
+  if (inGrace) {
+    const urgent = graceDays <= 3
+    return (
+      <div className={`mb-6 border rounded-xl px-5 py-4 flex items-center justify-between gap-4 flex-wrap ${urgent ? 'border-red-500/30 bg-red-500/5' : 'border-orange-500/25 bg-orange-500/5'}`}>
+        <div className="flex items-center gap-3">
+          <AlertTriangle size={16} className={urgent ? 'text-red-400 shrink-0' : 'text-orange-400 shrink-0'} />
+          <div>
+            <p className={`text-sm font-medium ${urgent ? 'text-red-400' : 'text-orange-400'}`}>
+              Assinatura expirada — {graceDays} dia{graceDays !== 1 ? 's' : ''} para regularizar
+            </p>
+            <p className="text-zinc-500 text-xs mt-0.5">
+              Após esse prazo, o acesso à plataforma será suspenso completamente. Apenas o agendamento funcionará até lá.
+            </p>
+          </div>
+        </div>
+        <a href="/dashboard/planos" className={`text-xs font-semibold px-4 py-2 rounded-lg transition-colors whitespace-nowrap ${urgent ? 'bg-red-500 hover:bg-red-400 text-white' : 'bg-orange-500 hover:bg-orange-400 text-white'}`}>
+          Renovar agora
+        </a>
+      </div>
+    )
+  }
+
+  // Plano pago — expirando em breve
+  if (subExpiring) {
+    const renewDate = subEndsAt ? new Date(subEndsAt).toLocaleDateString('pt-BR') : ''
+    return (
+      <div className="mb-6 border border-orange-500/25 bg-orange-500/5 rounded-xl px-5 py-4 flex items-center justify-between gap-4 flex-wrap">
+        <div className="flex items-center gap-3">
+          <Clock size={16} className="text-orange-400 shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-orange-400">
+              Assinatura expira em {subDays} dia{subDays !== 1 ? 's' : ''}
+              {renewDate && <span className="font-normal text-zinc-500"> ({renewDate})</span>}
+            </p>
+            <p className="text-zinc-500 text-xs mt-0.5">Renove para não interromper o acesso.</p>
+          </div>
+        </div>
+        <a href="/dashboard/planos" className="text-xs bg-orange-500 hover:bg-orange-400 text-white font-semibold px-4 py-2 rounded-lg transition-colors whitespace-nowrap">
+          Renovar
+        </a>
+      </div>
+    )
+  }
+
+  // Plano pago — ativo
+  const Icon       = plan === 'premium' ? Crown : Zap
+  const iconColor  = plan === 'premium' ? 'text-amber-400' : 'text-blue-400'
   const badgeColor = plan === 'premium' ? 'bg-amber-500/10 border-amber-500/20' : 'bg-blue-500/10 border-blue-500/20'
+  const renewDate  = subEndsAt ? new Date(subEndsAt).toLocaleDateString('pt-BR') : null
 
   return (
     <div className="mb-6 bg-zinc-900 border border-zinc-800 rounded-xl px-5 py-3.5 flex items-center justify-between gap-4 flex-wrap">
@@ -241,7 +306,8 @@ function PlanBanner({ plan, trialActive, trialExpired, daysLeft }: {
         </div>
         <div>
           <p className="text-sm text-zinc-300">
-            Plano <strong className={iconColor}>{def.label}</strong> — {def.price} {def.priceNote}
+            Plano <strong className={iconColor}>{def.label}</strong>
+            {renewDate && <span className="text-zinc-500 text-xs ml-2">· renova em {renewDate} ({subDays}d)</span>}
           </p>
         </div>
       </div>

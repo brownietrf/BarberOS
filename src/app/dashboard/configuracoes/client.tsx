@@ -10,7 +10,10 @@ import {
   Link2, Copy, Check, ExternalLink,
   ImageIcon, Upload, Loader2, X as XIcon,
   Wifi, WifiOff, QrCode, RefreshCw, LogOut,
+  Trash2, TriangleAlert, Lock,
 } from 'lucide-react'
+import { deleteAccount } from './actions'
+import { isSubscriptionExpired, gracePeriodDaysLeft } from '@/lib/plans'
 
 const DAY_LABELS: Record<string, string> = {
   seg: 'Segunda-feira',
@@ -72,6 +75,12 @@ export function ConfiguracoesClient({ barbershop, userEmail, whatsappInstance }:
   )
   const [botLoading, setBotLoading] = useState(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // Deleção de conta
+  const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const [deleteConfirm, setDeleteConfirm] = useState('')
+  const [deleteLoading, setDeleteLoading] = useState(false)
+  const [deleteError, setDeleteError] = useState('')
 
   // Logo
   const [logoUrl, setLogoUrl]       = useState<string | null>(barbershop.logo_url)
@@ -283,6 +292,17 @@ export function ConfiguracoesClient({ barbershop, userEmail, whatsappInstance }:
     }
   }
 
+  async function handleDeleteAccount() {
+    setDeleteLoading(true)
+    setDeleteError('')
+    const result = await deleteAccount()
+    if (result?.error) {
+      setDeleteError(result.error)
+      setDeleteLoading(false)
+    }
+    // Se não retornar erro, o server action faz redirect — loading fica ativo
+  }
+
   async function disconnectBot() {
     setBotLoading(true)
     try {
@@ -295,6 +315,9 @@ export function ConfiguracoesClient({ barbershop, userEmail, whatsappInstance }:
     }
   }
 
+  const subExpired = isSubscriptionExpired(barbershop)
+  const graceDays  = gracePeriodDaysLeft(barbershop)
+
   return (
     <div className="max-w-3xl mx-auto space-y-8">
 
@@ -306,115 +329,21 @@ export function ConfiguracoesClient({ barbershop, userEmail, whatsappInstance }:
         </p>
       </div>
 
-      {/* ── Seção: Logo ── */}
-      <Section icon={<ImageIcon size={16} />} title="Logo da barbearia" subtitle="Exibida na página de agendamento e nos links compartilhados">
-        <div className="flex items-start gap-5">
-
-          {/* Preview */}
-          <div className="relative shrink-0">
-            <div className="w-24 h-24 rounded-xl bg-zinc-800 border-2 border-zinc-700 overflow-hidden flex items-center justify-center">
-              {logoUrl ? (
-                <img src={logoUrl} alt="Logo" className="w-full h-full object-cover" />
-              ) : (
-                <Store size={32} className="text-zinc-600" />
-              )}
-            </div>
-            {logoUrl && (
-              <button
-                onClick={removeLogo}
-                disabled={logoStatus === 'uploading'}
-                title="Remover logo"
-                className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 hover:bg-red-400 disabled:opacity-50 rounded-full flex items-center justify-center transition-colors"
-              >
-                <XIcon size={10} className="text-white" />
-              </button>
-            )}
-          </div>
-
-          {/* Controles */}
-          <div className="flex flex-col gap-3">
-            <div>
-              <label
-                htmlFor="logo-upload"
-                className={cn(
-                  'inline-flex items-center gap-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-sm font-medium text-white px-4 py-2.5 rounded-lg transition-colors cursor-pointer',
-                  logoStatus === 'uploading' && 'opacity-50 pointer-events-none'
-                )}
-              >
-                {logoStatus === 'uploading'
-                  ? <><Loader2 size={14} className="animate-spin" /> Enviando…</>
-                  : <><Upload size={14} /> {logoUrl ? 'Alterar logo' : 'Enviar logo'}</>
-                }
-              </label>
-              <input
-                id="logo-upload"
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={handleLogoChange}
-                disabled={logoStatus === 'uploading'}
-              />
-            </div>
-
-            {logoStatus === 'saved' && (
-              <span className="flex items-center gap-1.5 text-green-400 text-sm">
-                <CheckCircle size={14} /> Logo atualizada!
-              </span>
-            )}
-            {logoStatus === 'error' && (
-              <span className="flex items-center gap-1.5 text-red-400 text-sm">
-                <AlertTriangle size={14} /> {logoError}
-              </span>
-            )}
-
-            <p className="text-xs text-zinc-500">JPG, PNG ou WebP · Máximo 2 MB · Recomendado: 512×512 px</p>
-          </div>
+      {/* Subscription expired banner */}
+      {subExpired && (
+        <div className={`flex items-start gap-3 border rounded-xl px-4 py-3 text-sm ${graceDays > 0 ? 'bg-orange-500/5 border-orange-500/20 text-orange-400' : 'bg-red-500/5 border-red-500/20 text-red-400'}`}>
+          <Lock size={14} className="shrink-0 mt-0.5" />
+          <span>
+            {graceDays > 0
+              ? <>Assinatura expirada — configurações bloqueadas. Você tem <strong>{graceDays} dia{graceDays !== 1 ? 's' : ''}</strong> para regularizar antes de perder acesso completo à plataforma. </>
+              : 'Assinatura expirada — alterações nas configurações estão suspensas. '
+            }
+            <a href="/dashboard/planos" className="underline underline-offset-2 hover:opacity-80">Renovar agora</a>
+          </span>
         </div>
-      </Section>
+      )}
 
-      {/* ── Seção: Link de agendamento ── */}
-      <Section icon={<Link2 size={16} />} title="Link de agendamento" subtitle="Compartilhe com seus clientes para receberem agendamentos online">
-        <div className="flex flex-col gap-4">
-          <div className="flex items-center gap-2 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2.5">
-            <span className="text-zinc-400 text-sm flex-1 truncate">{bookingUrl}</span>
-            <a
-              href={bookingUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="shrink-0 text-zinc-500 hover:text-white transition-colors"
-              title="Abrir página"
-            >
-              <ExternalLink size={15} />
-            </a>
-          </div>
-
-          <div className="flex gap-2">
-            <button
-              onClick={copyLink}
-              className="flex items-center gap-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-sm font-medium text-white px-4 py-2.5 rounded-lg transition-colors"
-            >
-              {copied ? <Check size={14} className="text-green-400" /> : <Copy size={14} />}
-              {copied ? 'Copiado!' : 'Copiar link'}
-            </button>
-
-            <button
-              onClick={shareWhatsApp}
-              className="flex items-center gap-2 bg-green-600 hover:bg-green-500 text-sm font-medium text-white px-4 py-2.5 rounded-lg transition-colors"
-            >
-              <svg viewBox="0 0 24 24" className="w-4 h-4 fill-current" xmlns="http://www.w3.org/2000/svg">
-                <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
-              </svg>
-              Compartilhar no WhatsApp
-            </button>
-          </div>
-
-          <p className="text-xs text-zinc-500">
-            Clientes acessam este link sem precisar criar conta. O agendamento aparece automaticamente na sua agenda.
-          </p>
-        </div>
-      </Section>
-
-      {/* ── Seção: Dados da conta ── */}
+      {/* ── 1. Conta ── */}
       <Section icon={<User size={16} />} title="Conta" subtitle="Informações de acesso">
         <div className="flex flex-col gap-3">
           <div className="flex flex-col gap-1.5">
@@ -429,7 +358,7 @@ export function ConfiguracoesClient({ barbershop, userEmail, whatsappInstance }:
         </div>
       </Section>
 
-      {/* ── Seção: Dados gerais ── */}
+      {/* ── 2. Barbearia ── */}
       <Section icon={<Store size={16} />} title="Barbearia" subtitle="Informações públicas da barbearia">
         <div className="flex flex-col gap-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -477,11 +406,146 @@ export function ConfiguracoesClient({ barbershop, userEmail, whatsappInstance }:
             </div>
           </div>
 
-          <SaveButton status={generalStatus} onClick={saveGeneral} />
+          <SaveButton status={generalStatus} onClick={saveGeneral} locked={subExpired} />
         </div>
       </Section>
 
-      {/* ── Seção: Bot ── */}
+      {/* ── 3. Logo ── */}
+      <Section icon={<ImageIcon size={16} />} title="Logo da barbearia" subtitle="Exibida na página de agendamento e nos links compartilhados">
+        <div className="flex items-start gap-5">
+
+          <div className="relative shrink-0">
+            <div className="w-24 h-24 rounded-xl bg-zinc-800 border-2 border-zinc-700 overflow-hidden flex items-center justify-center">
+              {logoUrl ? (
+                <img src={logoUrl} alt="Logo" className="w-full h-full object-cover" />
+              ) : (
+                <Store size={32} className="text-zinc-600" />
+              )}
+            </div>
+            {logoUrl && (
+              <button
+                onClick={removeLogo}
+                disabled={logoStatus === 'uploading'}
+                title="Remover logo"
+                className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 hover:bg-red-400 disabled:opacity-50 rounded-full flex items-center justify-center transition-colors"
+              >
+                <XIcon size={10} className="text-white" />
+              </button>
+            )}
+          </div>
+
+          <div className="flex flex-col gap-3">
+            <div>
+              <label
+                htmlFor="logo-upload"
+                className={cn(
+                  'inline-flex items-center gap-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-sm font-medium text-white px-4 py-2.5 rounded-lg transition-colors cursor-pointer',
+                  logoStatus === 'uploading' && 'opacity-50 pointer-events-none'
+                )}
+              >
+                {logoStatus === 'uploading'
+                  ? <><Loader2 size={14} className="animate-spin" /> Enviando…</>
+                  : <><Upload size={14} /> {logoUrl ? 'Alterar logo' : 'Enviar logo'}</>
+                }
+              </label>
+              <input
+                id="logo-upload"
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handleLogoChange}
+                disabled={logoStatus === 'uploading'}
+              />
+            </div>
+
+            {logoStatus === 'saved' && (
+              <span className="flex items-center gap-1.5 text-green-400 text-sm">
+                <CheckCircle size={14} /> Logo atualizada!
+              </span>
+            )}
+            {logoStatus === 'error' && (
+              <span className="flex items-center gap-1.5 text-red-400 text-sm">
+                <AlertTriangle size={14} /> {logoError}
+              </span>
+            )}
+
+            <p className="text-xs text-zinc-500">JPG, PNG ou WebP · Máximo 2 MB · Recomendado: 512×512 px</p>
+          </div>
+        </div>
+      </Section>
+
+      {/* ── 4. Horários ── */}
+      <Section icon={<Clock size={16} />} title="Horários de funcionamento" subtitle="Define quando os clientes podem agendar">
+        <div className="flex flex-col gap-3">
+          {DAY_ORDER.map(day => {
+            const schedule = workingHours[day as keyof WorkingHours]
+            return (
+              <DayRow
+                key={day}
+                day={day}
+                label={DAY_LABELS[day]}
+                schedule={schedule}
+                timeOptions={TIME_OPTIONS}
+                onToggle={() => toggleDay(day)}
+                onTimeChange={(field, value) => updateDayTime(day, field, value)}
+                onApplyToAll={() => applyToAll(day)}
+              />
+            )
+          })}
+
+          <div className="mt-2 bg-zinc-800/50 border border-zinc-700 rounded-lg p-3">
+            <p className="text-xs text-zinc-500 leading-relaxed">
+              💡 Clique em <strong className="text-zinc-400">"Aplicar a todos"</strong> em qualquer dia para copiar o horário para todos os dias ativos.
+            </p>
+          </div>
+
+          <SaveButton status={hoursStatus} onClick={saveHours} label="Salvar horários" locked={subExpired} />
+        </div>
+      </Section>
+
+      {/* ── 5. Link de agendamento ── */}
+      <Section icon={<Link2 size={16} />} title="Link de agendamento" subtitle="Compartilhe com seus clientes para receberem agendamentos online">
+        <div className="flex flex-col gap-4">
+          <div className="flex items-center gap-2 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2.5">
+            <span className="text-zinc-400 text-sm flex-1 truncate">{bookingUrl}</span>
+            <a
+              href={bookingUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="shrink-0 text-zinc-500 hover:text-white transition-colors"
+              title="Abrir página"
+            >
+              <ExternalLink size={15} />
+            </a>
+          </div>
+
+          <div className="flex gap-2">
+            <button
+              onClick={copyLink}
+              className="flex items-center gap-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-sm font-medium text-white px-4 py-2.5 rounded-lg transition-colors"
+            >
+              {copied ? <Check size={14} className="text-green-400" /> : <Copy size={14} />}
+              {copied ? 'Copiado!' : 'Copiar link'}
+            </button>
+
+            <button
+              onClick={shareWhatsApp}
+              className="flex items-center gap-2 bg-green-600 hover:bg-green-500 text-sm font-medium text-white px-4 py-2.5 rounded-lg transition-colors"
+            >
+              <svg viewBox="0 0 24 24" className="w-4 h-4 fill-current" xmlns="http://www.w3.org/2000/svg">
+                <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
+              </svg>
+              Compartilhar no WhatsApp
+            </button>
+          </div>
+
+          <p className="text-xs text-zinc-500">
+            Clientes acessam este link sem precisar criar conta. O agendamento aparece automaticamente na sua agenda.
+          </p>
+        </div>
+      </Section>
+
+      {/* ── 6. WhatsApp Bot ── */}
       <Section icon={<Bot size={16} />} title="WhatsApp Bot" subtitle="Como o assistente se apresenta aos clientes">
         <div className="flex flex-col gap-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -510,7 +574,6 @@ export function ConfiguracoesClient({ barbershop, userEmail, whatsappInstance }:
             </div>
           </div>
 
-          {/* Preview da saudação */}
           <div className="bg-zinc-800/50 border border-zinc-700 rounded-lg p-4">
             <p className="text-zinc-500 text-xs mb-3">Preview da mensagem de boas-vindas:</p>
             <div className="flex flex-col gap-2">
@@ -532,11 +595,11 @@ export function ConfiguracoesClient({ barbershop, userEmail, whatsappInstance }:
             </div>
           </div>
 
-          <SaveButton status={generalStatus} onClick={saveGeneral} />
+          <SaveButton status={generalStatus} onClick={saveGeneral} locked={subExpired} />
         </div>
       </Section>
 
-      {/* ── Seção: Conexão WhatsApp ── */}
+      {/* ── 7. Conexão WhatsApp ── */}
       <Section
         icon={<QrCode size={16} />}
         title="Conexão WhatsApp"
@@ -544,7 +607,6 @@ export function ConfiguracoesClient({ barbershop, userEmail, whatsappInstance }:
       >
         <div className="flex flex-col gap-5">
 
-          {/* Status badge */}
           <div className="flex items-center gap-3">
             <span className="text-sm text-zinc-400">Status:</span>
             {instanceStatus === 'connected' && (
@@ -570,7 +632,6 @@ export function ConfiguracoesClient({ barbershop, userEmail, whatsappInstance }:
             )}
           </div>
 
-          {/* QR Code */}
           {instanceStatus === 'connecting' && qrCode && (
             <div className="flex flex-col items-start gap-3">
               <div className="bg-white p-3 rounded-xl inline-block">
@@ -587,7 +648,6 @@ export function ConfiguracoesClient({ barbershop, userEmail, whatsappInstance }:
             </div>
           )}
 
-          {/* Ações */}
           <div className="flex items-center gap-3 flex-wrap">
             {instanceStatus === 'connected' ? (
               <button
@@ -595,9 +655,7 @@ export function ConfiguracoesClient({ barbershop, userEmail, whatsappInstance }:
                 disabled={botLoading}
                 className="flex items-center gap-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 text-sm font-medium px-4 py-2.5 rounded-lg transition-colors disabled:opacity-50"
               >
-                {botLoading
-                  ? <Loader2 size={14} className="animate-spin" />
-                  : <LogOut size={14} />}
+                {botLoading ? <Loader2 size={14} className="animate-spin" /> : <LogOut size={14} />}
                 Desconectar WhatsApp
               </button>
             ) : (
@@ -606,9 +664,7 @@ export function ConfiguracoesClient({ barbershop, userEmail, whatsappInstance }:
                 disabled={botLoading || instanceStatus === 'connecting'}
                 className="flex items-center gap-2 bg-green-600 hover:bg-green-500 disabled:bg-green-600/50 text-white text-sm font-semibold px-4 py-2.5 rounded-lg transition-colors"
               >
-                {botLoading
-                  ? <Loader2 size={14} className="animate-spin" />
-                  : <QrCode size={14} />}
+                {botLoading ? <Loader2 size={14} className="animate-spin" /> : <QrCode size={14} />}
                 {instanceStatus === 'connecting' ? 'Aguardando leitura…' : 'Conectar WhatsApp'}
               </button>
             )}
@@ -631,34 +687,109 @@ export function ConfiguracoesClient({ barbershop, userEmail, whatsappInstance }:
         </div>
       </Section>
 
-      {/* ── Seção: Horários ── */}
-      <Section icon={<Clock size={16} />} title="Horários de funcionamento" subtitle="Define quando os clientes podem agendar">
-        <div className="flex flex-col gap-3">
-          {DAY_ORDER.map(day => {
-            const schedule = workingHours[day as keyof WorkingHours]
-            return (
-              <DayRow
-                key={day}
-                day={day}
-                label={DAY_LABELS[day]}
-                schedule={schedule}
-                timeOptions={TIME_OPTIONS}
-                onToggle={() => toggleDay(day)}
-                onTimeChange={(field, value) => updateDayTime(day, field, value)}
-                onApplyToAll={() => applyToAll(day)}
-              />
-            )
-          })}
-
-          <div className="mt-2 bg-zinc-800/50 border border-zinc-700 rounded-lg p-3">
-            <p className="text-xs text-zinc-500 leading-relaxed">
-              💡 Clique em <strong className="text-zinc-400">"Aplicar a todos"</strong> em qualquer dia para copiar o horário para todos os dias ativos.
-            </p>
+      {/* ── 8. Zona de perigo ── */}
+      <div className="bg-zinc-900 border border-red-500/20 rounded-xl overflow-hidden">
+        <div className="px-6 py-4 border-b border-red-500/10 flex items-center gap-3">
+          <div className="w-7 h-7 bg-red-500/10 rounded-lg flex items-center justify-center text-red-500">
+            <TriangleAlert size={16} />
           </div>
-
-          <SaveButton status={hoursStatus} onClick={saveHours} label="Salvar horários" />
+          <div>
+            <h2 className="text-sm font-semibold text-white">Zona de perigo</h2>
+            <p className="text-xs text-zinc-500">Ações irreversíveis — prossiga com cuidado</p>
+          </div>
         </div>
-      </Section>
+        <div className="px-6 py-5">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium text-white">Apagar conta</p>
+              <p className="text-xs text-zinc-500 mt-0.5">
+                Remove permanentemente sua conta, barbearia, clientes, serviços e agendamentos. Esta ação não pode ser desfeita.
+              </p>
+            </div>
+            <button
+              onClick={() => setShowDeleteModal(true)}
+              className="shrink-0 flex items-center gap-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 text-sm font-medium px-4 py-2 rounded-lg transition-colors"
+            >
+              <Trash2 size={14} />
+              Apagar conta
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Modal: confirmar deleção ── */}
+      {showDeleteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-md shadow-2xl">
+
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-zinc-800">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 bg-red-500/10 rounded-lg flex items-center justify-center">
+                  <Trash2 size={16} className="text-red-500" />
+                </div>
+                <h3 className="font-semibold text-white">Apagar conta permanentemente</h3>
+              </div>
+              <button
+                onClick={() => { setShowDeleteModal(false); setDeleteConfirm(''); setDeleteError('') }}
+                className="text-zinc-500 hover:text-white transition-colors"
+              >
+                <XIcon size={18} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="px-6 py-5 flex flex-col gap-4">
+              <div className="bg-red-500/5 border border-red-500/20 rounded-lg p-3">
+                <p className="text-red-400 text-sm leading-relaxed">
+                  Esta ação é <strong>irreversível</strong>. Todos os dados serão apagados permanentemente:
+                  barbearia, clientes, serviços, agendamentos e conta de acesso.
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-sm text-zinc-400">
+                  Para confirmar, digite o nome da barbearia:{' '}
+                  <span className="text-white font-medium">{barbershop.name}</span>
+                </label>
+                <input
+                  value={deleteConfirm}
+                  onChange={e => { setDeleteConfirm(e.target.value); setDeleteError('') }}
+                  placeholder={barbershop.name}
+                  className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2.5 text-white text-sm placeholder:text-zinc-600 focus:outline-none focus:border-red-500 transition-colors"
+                  autoComplete="off"
+                />
+              </div>
+
+              {deleteError && (
+                <p className="flex items-center gap-1.5 text-red-400 text-sm">
+                  <AlertTriangle size={14} /> {deleteError}
+                </p>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-end gap-3 px-6 pb-6">
+              <button
+                onClick={() => { setShowDeleteModal(false); setDeleteConfirm(''); setDeleteError('') }}
+                disabled={deleteLoading}
+                className="text-sm text-zinc-400 hover:text-white transition-colors disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleDeleteAccount}
+                disabled={deleteConfirm !== barbershop.name || deleteLoading}
+                className="flex items-center gap-2 bg-red-600 hover:bg-red-500 disabled:bg-red-600/30 disabled:text-red-400/50 text-white text-sm font-semibold px-4 py-2.5 rounded-lg transition-colors"
+              >
+                {deleteLoading
+                  ? <><Loader2 size={14} className="animate-spin" /> Apagando…</>
+                  : <><Trash2 size={14} /> Apagar minha conta</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   )
@@ -695,12 +826,28 @@ function Section({
 function SaveButton({
   status,
   onClick,
-  label = 'Salvar alterações'
+  label = 'Salvar alterações',
+  locked = false,
 }: {
   status: SaveStatus
   onClick: () => void
   label?: string
+  locked?: boolean
 }) {
+  if (locked) {
+    return (
+      <div className="flex items-center justify-end pt-2">
+        <button
+          disabled
+          title="Renove sua assinatura para salvar alterações"
+          className="flex items-center gap-2 bg-zinc-800 text-zinc-600 cursor-not-allowed font-semibold px-4 py-2 rounded-lg text-sm ml-auto"
+        >
+          <Lock size={14} /> Salvar alterações
+        </button>
+      </div>
+    )
+  }
+
   return (
     <div className="flex items-center justify-between pt-2">
       {status === 'saved' && (
