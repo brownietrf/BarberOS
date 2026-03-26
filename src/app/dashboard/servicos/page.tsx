@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import { ServicosClient } from './client'
+import { isSubscriptionExpired, gracePeriodDaysLeft } from '@/lib/plans'
 
 export default async function ServicosPage() {
   const supabase = await createClient()
@@ -10,7 +11,7 @@ export default async function ServicosPage() {
 
   const { data: barbershop } = await supabase
     .from('barbershops')
-    .select('id')
+    .select('id, plan, subscription_ends_at, grace_period_days')
     .eq('owner_id', user.id)
     .single()
 
@@ -27,6 +28,8 @@ export default async function ServicosPage() {
     <ServicosClient
       barbershopId={barbershop.id}
       initialServices={services ?? []}
+      subscriptionExpired={isSubscriptionExpired(barbershop)}
+      graceDays={gracePeriodDaysLeft(barbershop)}
     />
   )
 }

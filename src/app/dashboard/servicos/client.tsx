@@ -7,7 +7,7 @@ import {
   Scissors, Plus, Pencil, Trash2, Clock,
   DollarSign, ToggleLeft, ToggleRight, GripVertical,
   AlertTriangle, Tag, ChevronDown, ChevronRight,
-  Sparkles, Check,
+  Sparkles, Check, Lock,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { Service, ServiceCategory } from '@/types/database'
@@ -93,9 +93,11 @@ interface DuplicateWarning {
 interface Props {
   barbershopId: string
   initialServices: Service[]
+  subscriptionExpired?: boolean
+  graceDays?: number
 }
 
-export function ServicosClient({ barbershopId, initialServices }: Props) {
+export function ServicosClient({ barbershopId, initialServices, subscriptionExpired = false, graceDays = 0 }: Props) {
   const supabase = createClient()
   const [services, setServices] = useState<Service[]>(initialServices.map(normalize))
   const [saving, setSaving] = useState(false)
@@ -322,7 +324,7 @@ export function ServicosClient({ barbershopId, initialServices }: Props) {
   return (
     <div className="max-w-3xl mx-auto">
 
-      <div className="flex items-start justify-between mb-8">
+      <div className="flex items-start justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-white">Serviços</h1>
           <p className="text-zinc-400 text-sm mt-1">
@@ -331,7 +333,7 @@ export function ServicosClient({ barbershopId, initialServices }: Props) {
         </div>
         <div className="flex items-center gap-2">
           {/* Botão sutil de sugestões para quem já tem serviços suficientes */}
-          {services.length > 5 && availableTemplates.length > 0 && (
+          {!subscriptionExpired && services.length > 5 && availableTemplates.length > 0 && (
             <button
               onClick={() => { setShowTemplates(v => !v); setSelectedTemplates(new Set()) }}
               className={cn(
@@ -345,11 +347,36 @@ export function ServicosClient({ barbershopId, initialServices }: Props) {
               Sugestões
             </button>
           )}
-          <button onClick={openCreate} className="flex items-center gap-2 bg-amber-500 hover:bg-amber-400 text-black font-semibold px-4 py-2.5 rounded-lg text-sm transition-colors">
-            <Plus size={16} /> Novo serviço
+          <button
+            onClick={subscriptionExpired ? undefined : openCreate}
+            disabled={subscriptionExpired}
+            title={subscriptionExpired ? 'Renove sua assinatura para adicionar serviços' : undefined}
+            className={cn(
+              'flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors',
+              subscriptionExpired
+                ? 'bg-zinc-800 text-zinc-600 cursor-not-allowed'
+                : 'bg-amber-500 hover:bg-amber-400 text-black'
+            )}
+          >
+            {subscriptionExpired ? <Lock size={14} /> : <Plus size={16} />}
+            Novo serviço
           </button>
         </div>
       </div>
+
+      {/* Subscription expired banner */}
+      {subscriptionExpired && (
+        <div className={`flex items-start gap-3 border rounded-xl px-4 py-3 mb-6 text-sm ${graceDays > 0 ? 'bg-orange-500/5 border-orange-500/20 text-orange-400' : 'bg-red-500/5 border-red-500/20 text-red-400'}`}>
+          <Lock size={14} className="shrink-0 mt-0.5" />
+          <span>
+            {graceDays > 0
+              ? <>Assinatura expirada — edição de serviços suspensa. Você tem <strong>{graceDays} dia{graceDays !== 1 ? 's' : ''}</strong> para regularizar antes de perder acesso completo à plataforma. </>
+              : 'Assinatura expirada — edição de serviços suspensa. '
+            }
+            <a href="/dashboard/planos" className="underline underline-offset-2 hover:opacity-80">Renovar agora</a>
+          </span>
+        </div>
+      )}
 
       {/* ── Painel de templates ── */}
       {showTemplates && availableTemplates.length > 0 && (
@@ -597,7 +624,7 @@ export function ServicosClient({ barbershopId, initialServices }: Props) {
                 {!isCollapsed && (
                   <div className="space-y-2">
                     {items.map(s => (
-                      <ServiceCard key={s.id} service={s} onEdit={openEdit} onToggle={handleToggle} onDelete={setDeleteModal} />
+                      <ServiceCard key={s.id} service={s} onEdit={openEdit} onToggle={handleToggle} onDelete={setDeleteModal} locked={subscriptionExpired} />
                     ))}
                   </div>
                 )}
@@ -620,7 +647,7 @@ export function ServicosClient({ barbershopId, initialServices }: Props) {
               {!collapsed.has('_none') && (
                 <div className="space-y-2">
                   {uncategorized.map(s => (
-                    <ServiceCard key={s.id} service={s} onEdit={openEdit} onToggle={handleToggle} onDelete={setDeleteModal} />
+                    <ServiceCard key={s.id} service={s} onEdit={openEdit} onToggle={handleToggle} onDelete={setDeleteModal} locked={subscriptionExpired} />
                   ))}
                 </div>
               )}
@@ -812,9 +839,10 @@ interface ServiceCardProps {
   onEdit: (s: Service) => void
   onToggle: (s: Service) => void
   onDelete: (s: Service) => void
+  locked?: boolean
 }
 
-function ServiceCard({ service, onEdit, onToggle, onDelete }: ServiceCardProps) {
+function ServiceCard({ service, onEdit, onToggle, onDelete, locked = false }: ServiceCardProps) {
   return (
     <div className={cn(
       'bg-zinc-900 border rounded-xl px-5 py-4 flex items-center gap-4 transition-all',
@@ -860,14 +888,18 @@ function ServiceCard({ service, onEdit, onToggle, onDelete }: ServiceCardProps) 
           {service.is_active ? <ToggleRight size={18} /> : <ToggleLeft size={18} />}
         </button>
         <button
-          onClick={(e) => { e.stopPropagation(); onEdit(service) }}
-          className="p-2 rounded-lg text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 transition-colors"
+          onClick={(e) => { e.stopPropagation(); if (!locked) onEdit(service) }}
+          disabled={locked}
+          title={locked ? 'Renove sua assinatura para editar' : undefined}
+          className={cn('p-2 rounded-lg transition-colors', locked ? 'text-zinc-700 cursor-not-allowed' : 'text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800')}
         >
           <Pencil size={15} />
         </button>
         <button
-          onClick={(e) => { e.stopPropagation(); onDelete(service) }}
-          className="p-2 rounded-lg text-zinc-500 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+          onClick={(e) => { e.stopPropagation(); if (!locked) onDelete(service) }}
+          disabled={locked}
+          title={locked ? 'Renove sua assinatura para excluir' : undefined}
+          className={cn('p-2 rounded-lg transition-colors', locked ? 'text-zinc-700 cursor-not-allowed' : 'text-zinc-500 hover:text-red-400 hover:bg-red-500/10')}
         >
           <Trash2 size={15} />
         </button>

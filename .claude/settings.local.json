@@ -3,7 +3,9 @@
     "allow": [
       "Bash(find /c/Users/bryan/Desktop/Repositórios/BarberOS/src -name *book* -o -name *slug*)",
       "Bash(ls -la /c/Users/bryan/Desktop/Repositórios/BarberOS/*.json)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(find c:UsersbryanDesktopRepositóriosBarberOS -type f \\\\\\(-name *.ts -o -name *.tsx \\\\\\))",
+      "Bash(xargs grep:*)"
     ]
   }
 }

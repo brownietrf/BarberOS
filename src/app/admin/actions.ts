@@ -16,12 +16,22 @@ export async function updatePlan(
   barbershopId: string,
   plan: string,
   trialEndsAt: string,
+  subscriptionEndsAt?: string | null,
+  subscriptionPeriod?: string | null,
+  gracePeriodDays?: number | null,
 ): Promise<{ error?: string }> {
   try {
     await verifyAdmin()
     const { error } = await adminClient
       .from('barbershops')
-      .update({ plan, trial_ends_at: trialEndsAt, updated_at: new Date().toISOString() })
+      .update({
+        plan,
+        trial_ends_at: trialEndsAt,
+        subscription_ends_at: subscriptionEndsAt ?? null,
+        subscription_period: subscriptionPeriod ?? null,
+        grace_period_days: gracePeriodDays ?? null,
+        updated_at: new Date().toISOString(),
+      })
       .eq('id', barbershopId)
     if (error) return { error: error.message }
     revalidatePath('/admin')

@@ -1,4 +1,4 @@
-import type { Barbershop, Plan } from '@/types/database'
+import type { Barbershop, Plan, SubscriptionPeriod } from '@/types/database'
 
 export interface PlanFeature {
   label: string
@@ -90,6 +90,46 @@ export const PLANS: Record<Plan, PlanDef> = {
   },
 }
 
+// ─── Billing Periods ──────────────────────────────────────────────────────────
+
+export interface BillingPeriodDef {
+  label: string
+  months: number
+  discount: number   // percentage (0 = no discount, 20 = 20% off)
+  badge?: string
+}
+
+export const BILLING_PERIODS: Record<SubscriptionPeriod, BillingPeriodDef> = {
+  monthly:  { label: 'Mensal',     months: 1,  discount: 0  },
+  '3months':  { label: '3 meses',   months: 3,  discount: 5,  badge: '5% off'  },
+  '6months':  { label: '6 meses',   months: 6,  discount: 10, badge: '10% off' },
+  '12months': { label: '12 meses',  months: 12, discount: 20, badge: '20% off' },
+}
+
+/** Returns total price and monthly equivalent for a given plan + period */
+export function getSubscriptionPrice(plan: 'pro' | 'premium', period: SubscriptionPeriod): {
+  total: number
+  perMonth: number
+  discount: number
+} {
+  const base   = plan === 'pro' ? 49.9 : 89.9
+  const def    = BILLING_PERIODS[period]
+  const factor = 1 - def.discount / 100
+  const total  = base * def.months * factor
+  return {
+    total:    Math.round(total * 100) / 100,
+    perMonth: Math.round((total / def.months) * 100) / 100,
+    discount: def.discount,
+  }
+}
+
+/** Calculates subscription_ends_at from today for a given period */
+export function calcSubscriptionEndsAt(period: SubscriptionPeriod): Date {
+  const d = new Date()
+  d.setMonth(d.getMonth() + BILLING_PERIODS[period].months)
+  return d
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 export function isTrialActive(b: Pick<Barbershop, 'plan' | 'trial_ends_at'>): boolean {
@@ -104,4 +144,51 @@ export function trialDaysLeft(b: Pick<Barbershop, 'trial_ends_at'>): number {
   return Math.max(0, Math.ceil(
     (new Date(b.trial_ends_at).getTime() - Date.now()) / 86_400_000
   ))
+}
+
+/** Grace period after subscription expiry before full lockout */
+export const GRACE_PERIOD_DAYS = 10
+
+/** True when a paid plan subscription has passed its end date */
+export function isSubscriptionExpired(b: Pick<Barbershop, 'plan' | 'subscription_ends_at'>): boolean {
+  if (b.plan === 'free') return false
+  if (!b.subscription_ends_at) return false
+  return new Date(b.subscription_ends_at) <= new Date()
+}
+
+/** Days left on a paid subscription (0 if null or expired) */
+export function subscriptionDaysLeft(b: Pick<Barbershop, 'subscription_ends_at'>): number {
+  if (!b.subscription_ends_at) return 0
+  return Math.max(0, Math.ceil(
+    (new Date(b.subscription_ends_at).getTime() - Date.now()) / 86_400_000
+  ))
+}
+
+/** True when subscription expires within `days` days (default 7) */
+export function isSubscriptionExpiring(
+  b: Pick<Barbershop, 'plan' | 'subscription_ends_at'>,
+  days = 7,
+): boolean {
+  if (b.plan === 'free' || !b.subscription_ends_at) return false
+  const left = subscriptionDaysLeft(b)
+  return left > 0 && left <= days
+}
+
+/** Days remaining in the grace period after expiry (0 if not in grace or fully locked) */
+export function gracePeriodDaysLeft(b: Pick<Barbershop, 'plan' | 'subscription_ends_at' | 'grace_period_days'>): number {
+  if (!isSubscriptionExpired(b) || !b.subscription_ends_at) return 0
+  const days = b.grace_period_days ?? GRACE_PERIOD_DAYS
+  const graceEnd = new Date(b.subscription_ends_at)
+  graceEnd.setDate(graceEnd.getDate() + days)
+  return Math.max(0, Math.ceil((graceEnd.getTime() - Date.now()) / 86_400_000))
+}
+
+/** True when expired but still within the grace period (partial block, agenda still works) */
+export function isGracePeriod(b: Pick<Barbershop, 'plan' | 'subscription_ends_at' | 'grace_period_days'>): boolean {
+  return isSubscriptionExpired(b) && gracePeriodDaysLeft(b) > 0
+}
+
+/** True when grace period has also passed — full platform lockout */
+export function isFullyLocked(b: Pick<Barbershop, 'plan' | 'subscription_ends_at' | 'grace_period_days'>): boolean {
+  return isSubscriptionExpired(b) && gracePeriodDaysLeft(b) === 0
 }

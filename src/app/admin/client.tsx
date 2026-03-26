@@ -20,9 +20,19 @@ import {
   X,
   TrendingUp,
   Download,
+  ChevronUp,
+  ChevronDown,
+  ChevronsUpDown,
+  Timer,
+  Lock,
 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
-import { PLANS, trialDaysLeft, isTrialExpired } from '@/lib/plans'
+import {
+  PLANS, BILLING_PERIODS, trialDaysLeft, isTrialExpired,
+  isSubscriptionExpired, subscriptionDaysLeft, isGracePeriod,
+  isFullyLocked, gracePeriodDaysLeft, GRACE_PERIOD_DAYS,
+} from '@/lib/plans'
+import type { SubscriptionPeriod } from '@/types/database'
 import { updatePlan, toggleActive } from './actions'
 import type { AdminBarbershop } from './page'
 import type { Plan } from '@/types/database'
@@ -45,6 +55,10 @@ interface Props {
   barbershops: AdminBarbershop[]
   adminEmail: string
 }
+
+type SortKey = 'name' | 'plan' | 'subscription' | 'created_at'
+type SortDir = 'asc' | 'desc'
+type SubFilter = 'all' | 'active' | 'expiring' | 'grace' | 'locked' | 'expired'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -72,31 +86,41 @@ export function AdminClient({ barbershops: initial, adminEmail }: Props) {
   const [barbershops, setBarbershops] = useState(initial)
   const [search, setSearch]           = useState('')
   const [planFilter, setPlanFilter]   = useState<Plan | 'all'>('all')
+  const [subFilter, setSubFilter]     = useState<SubFilter>('all')
   const [editTarget, setEditTarget]   = useState<AdminBarbershop | null>(null)
   const [saving, setSaving]           = useState(false)
   const [saveError, setSaveError]     = useState('')
+  const [sortKey, setSortKey]         = useState<SortKey>('created_at')
+  const [sortDir, setSortDir]         = useState<SortDir>('desc')
 
   // Edit form state
-  const [editPlan, setEditPlan]               = useState<Plan>('free')
-  const [editTrialEndsAt, setEditTrialEndsAt] = useState('')
-  const [editActive, setEditActive]           = useState(true)
+  const [editPlan, setEditPlan]                         = useState<Plan>('free')
+  const [editTrialEndsAt, setEditTrialEndsAt]           = useState('')
+  const [editActive, setEditActive]                     = useState(true)
+  const [editSubEndsAt, setEditSubEndsAt]               = useState('')
+  const [editSubPeriod, setEditSubPeriod]               = useState<SubscriptionPeriod | ''>('')
+  const [editGraceDays, setEditGraceDays]               = useState<string>('')
 
   // ── Computed stats ──────────────────────────────────────────────────────
 
   const stats = useMemo(() => {
-    const total          = barbershops.length
-    const trials         = barbershops.filter(b => b.plan === 'free' && !isTrialExpired(b)).length
-    const expired        = barbershops.filter(b => isTrialExpired(b)).length
-    const paid           = barbershops.filter(b => b.plan !== 'free').length
-    const proCount       = barbershops.filter(b => b.plan === 'pro').length
-    const premiumCount   = barbershops.filter(b => b.plan === 'premium').length
-    const mrr            = proCount * MRR_PRO + premiumCount * MRR_PREMIUM
-    const arr            = mrr * 12
-    const expiringTrials = barbershops.filter(b => {
-      if (b.plan !== 'free' || isTrialExpired(b)) return false
-      return trialDaysLeft(b) <= 7
+    const total            = barbershops.length
+    const trials           = barbershops.filter(b => b.plan === 'free' && !isTrialExpired(b)).length
+    const expired          = barbershops.filter(b => isTrialExpired(b)).length
+    const paid             = barbershops.filter(b => b.plan !== 'free').length
+    const proCount         = barbershops.filter(b => b.plan === 'pro').length
+    const premiumCount     = barbershops.filter(b => b.plan === 'premium').length
+    const mrr              = proCount * MRR_PRO + premiumCount * MRR_PREMIUM
+    const arr              = mrr * 12
+    const expiringTrials   = barbershops.filter(b => b.plan === 'free' && !isTrialExpired(b) && trialDaysLeft(b) <= 7).length
+    const expiringSub      = barbershops.filter(b => {
+      if (b.plan === 'free' || !b.subscription_ends_at) return false
+      const d = subscriptionDaysLeft(b)
+      return d > 0 && d <= 7
     }).length
-    return { total, trials, expired, paid, mrr, arr, expiringTrials }
+    const inGrace          = barbershops.filter(b => isGracePeriod(b)).length
+    const fullyLocked      = barbershops.filter(b => isFullyLocked(b)).length
+    return { total, trials, expired, paid, mrr, arr, expiringTrials, expiringSub, inGrace, fullyLocked }
   }, [barbershops])
 
   // ── Growth chart data (last 12 months) ──────────────────────────────────
@@ -131,26 +155,81 @@ export function AdminClient({ barbershops: initial, adminEmail }: Props) {
     ].filter(d => d.value > 0)
   }, [barbershops])
 
-  // ── Filtered list ───────────────────────────────────────────────────────
+  // ── Filtered + sorted list ───────────────────────────────────────────────
 
   const filtered = useMemo(() => {
-    return barbershops.filter(b => {
+    let list = barbershops.filter(b => {
       const matchSearch =
         b.name.toLowerCase().includes(search.toLowerCase()) ||
         b.owner_email.toLowerCase().includes(search.toLowerCase()) ||
         b.slug.toLowerCase().includes(search.toLowerCase())
       const matchPlan = planFilter === 'all' || b.plan === planFilter
-      return matchSearch && matchPlan
+
+      let matchSub = true
+      if (subFilter !== 'all') {
+        if (subFilter === 'active') {
+          matchSub = b.plan !== 'free' && !isSubscriptionExpired(b)
+        } else if (subFilter === 'expiring') {
+          const d = b.plan !== 'free' ? subscriptionDaysLeft(b) : -1
+          matchSub = d > 0 && d <= 7
+        } else if (subFilter === 'grace') {
+          matchSub = isGracePeriod(b)
+        } else if (subFilter === 'locked') {
+          matchSub = isFullyLocked(b)
+        } else if (subFilter === 'expired') {
+          matchSub = isSubscriptionExpired(b)
+        }
+      }
+
+      return matchSearch && matchPlan && matchSub
     })
-  }, [barbershops, search, planFilter])
+
+    list = [...list].sort((a, b) => {
+      let va: string | number = ''
+      let vb: string | number = ''
+
+      if (sortKey === 'name') {
+        va = a.name.toLowerCase()
+        vb = b.name.toLowerCase()
+      } else if (sortKey === 'plan') {
+        const order: Record<Plan, number> = { free: 0, pro: 1, premium: 2 }
+        va = order[a.plan]
+        vb = order[b.plan]
+      } else if (sortKey === 'subscription') {
+        va = a.subscription_ends_at ?? ''
+        vb = b.subscription_ends_at ?? ''
+      } else if (sortKey === 'created_at') {
+        va = a.created_at
+        vb = b.created_at
+      }
+
+      if (va < vb) return sortDir === 'asc' ? -1 : 1
+      if (va > vb) return sortDir === 'asc' ? 1 : -1
+      return 0
+    })
+
+    return list
+  }, [barbershops, search, planFilter, subFilter, sortKey, sortDir])
 
   // ── Handlers ────────────────────────────────────────────────────────────
+
+  function toggleSort(key: SortKey) {
+    if (sortKey === key) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortKey(key)
+      setSortDir('asc')
+    }
+  }
 
   function openEdit(b: AdminBarbershop) {
     setEditTarget(b)
     setEditPlan(b.plan)
     setEditTrialEndsAt(b.trial_ends_at.slice(0, 10))
     setEditActive(b.is_active)
+    setEditSubEndsAt(b.subscription_ends_at ? b.subscription_ends_at.slice(0, 10) : '')
+    setEditSubPeriod((b.subscription_period as SubscriptionPeriod | '') ?? '')
+    setEditGraceDays(b.grace_period_days != null ? String(b.grace_period_days) : '')
     setSaveError('')
   }
 
@@ -159,8 +238,21 @@ export function AdminClient({ barbershops: initial, adminEmail }: Props) {
     setSaving(true)
     setSaveError('')
 
-    const trialIso = new Date(editTrialEndsAt + 'T23:59:59').toISOString()
-    const { error } = await updatePlan(editTarget.id, editPlan, trialIso)
+    const trialIso    = new Date(editTrialEndsAt + 'T23:59:59').toISOString()
+    const subEndIso   = editSubEndsAt ? new Date(editSubEndsAt + 'T23:59:59').toISOString() : null
+    const graceDaysN  = editGraceDays !== '' ? Number(editGraceDays) : null
+    if (graceDaysN !== null && (isNaN(graceDaysN) || graceDaysN < 0 || graceDaysN > 365)) {
+      setSaveError('Carência deve ser entre 0 e 365 dias.')
+      setSaving(false)
+      return
+    }
+
+    const { error } = await updatePlan(
+      editTarget.id, editPlan, trialIso,
+      subEndIso,
+      editSubPeriod || null,
+      graceDaysN,
+    )
     if (error) { setSaveError(error); setSaving(false); return }
 
     if (editActive !== editTarget.is_active) {
@@ -170,7 +262,15 @@ export function AdminClient({ barbershops: initial, adminEmail }: Props) {
 
     setBarbershops(prev => prev.map(b =>
       b.id === editTarget.id
-        ? { ...b, plan: editPlan, trial_ends_at: trialIso, is_active: editActive }
+        ? {
+            ...b,
+            plan: editPlan,
+            trial_ends_at: trialIso,
+            is_active: editActive,
+            subscription_ends_at: subEndIso,
+            subscription_period: (editSubPeriod || null) as SubscriptionPeriod | null,
+            grace_period_days: graceDaysN,
+          }
         : b
     ))
     setEditTarget(null)
@@ -193,13 +293,16 @@ export function AdminClient({ barbershops: initial, adminEmail }: Props) {
 
   function exportCSV() {
     const bom    = '\ufeff'
-    const header = 'Nome;Slug;Email;Plano;Trial até;Ativa;Criada em'
+    const header = 'Nome;Slug;Email;Plano;Trial até;Assinatura até;Período;Carência (dias);Ativa;Criada em'
     const rows   = filtered.map(b => [
       b.name,
       b.slug,
       b.owner_email,
       PLANS[b.plan].label,
       b.trial_ends_at.slice(0, 10),
+      b.subscription_ends_at ? b.subscription_ends_at.slice(0, 10) : '',
+      b.subscription_period ? BILLING_PERIODS[b.subscription_period as SubscriptionPeriod].label : '',
+      b.grace_period_days != null ? String(b.grace_period_days) : String(GRACE_PERIOD_DAYS),
       b.is_active ? 'Sim' : 'Não',
       b.created_at.slice(0, 10),
     ].join(';'))
@@ -260,33 +363,63 @@ export function AdminClient({ barbershops: initial, adminEmail }: Props) {
           <p className="text-zinc-400 text-sm mt-1">Gerenciamento de planos e acessos da plataforma</p>
         </div>
 
-        {/* Stats — 6 cards */}
-        <div className="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
+        {/* Stats — 8 cards */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
           <StatCard icon={Scissors}      iconBg="bg-zinc-700/50"    iconColor="text-zinc-300"
-            label="Total de barbearias"   value={stats.total} />
+            label="Total de barbearias" value={stats.total} />
           <StatCard icon={Clock}         iconBg="bg-yellow-500/10"  iconColor="text-yellow-400"
-            label="Em período de teste"   value={stats.trials} />
-          <StatCard icon={AlertTriangle} iconBg="bg-red-500/10"     iconColor="text-red-400"
-            label="Teste expirado"        value={stats.expired} />
+            label="Em trial"            value={stats.trials} />
           <StatCard icon={Users}         iconBg="bg-green-500/10"   iconColor="text-green-400"
-            label="Planos pagos"          value={stats.paid} />
+            label="Planos pagos"        value={stats.paid} />
+          <StatCard icon={AlertTriangle} iconBg="bg-red-500/10"     iconColor="text-red-400"
+            label="Trial expirado"      value={stats.expired} />
           <StatCard icon={TrendingUp}    iconBg="bg-blue-500/10"    iconColor="text-blue-400"
-            label="MRR"                   value={stats.mrr}
+            label="MRR"                 value={stats.mrr}
             displayValue={`R$ ${stats.mrr.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} />
           <StatCard icon={TrendingUp}    iconBg="bg-purple-500/10"  iconColor="text-purple-400"
-            label="ARR"                   value={stats.arr}
+            label="ARR"                 value={stats.arr}
             displayValue={`R$ ${stats.arr.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`} />
+          <StatCard icon={Timer}         iconBg="bg-orange-500/10"  iconColor="text-orange-400"
+            label="Em carência"         value={stats.inGrace} />
+          <StatCard icon={Lock}          iconBg="bg-red-500/10"     iconColor="text-red-400"
+            label="Bloqueados"          value={stats.fullyLocked} />
         </div>
 
-        {/* Expiring trials alert */}
-        {stats.expiringTrials > 0 && (
-          <div className="flex items-center gap-3 bg-orange-500/10 border border-orange-500/20 rounded-xl px-4 py-3 mb-6 text-sm text-orange-300">
-            <AlertTriangle size={15} className="shrink-0" />
-            <span>
-              <strong>{stats.expiringTrials}</strong> barbearia{stats.expiringTrials !== 1 ? 's' : ''} com trial expirando em até 7 dias
-            </span>
-          </div>
-        )}
+        {/* Alert banners */}
+        <div className="space-y-2 mb-6">
+          {stats.expiringTrials > 0 && (
+            <div className="flex items-center gap-3 bg-orange-500/10 border border-orange-500/20 rounded-xl px-4 py-3 text-sm text-orange-300">
+              <AlertTriangle size={15} className="shrink-0" />
+              <span>
+                <strong>{stats.expiringTrials}</strong> barbearia{stats.expiringTrials !== 1 ? 's' : ''} com trial expirando em até 7 dias
+              </span>
+            </div>
+          )}
+          {stats.expiringSub > 0 && (
+            <div className="flex items-center gap-3 bg-yellow-500/10 border border-yellow-500/20 rounded-xl px-4 py-3 text-sm text-yellow-300">
+              <Clock size={15} className="shrink-0" />
+              <span>
+                <strong>{stats.expiringSub}</strong> assinatura{stats.expiringSub !== 1 ? 's' : ''} expirando em até 7 dias
+              </span>
+            </div>
+          )}
+          {stats.inGrace > 0 && (
+            <div className="flex items-center gap-3 bg-orange-500/10 border border-orange-500/20 rounded-xl px-4 py-3 text-sm text-orange-300">
+              <Timer size={15} className="shrink-0" />
+              <span>
+                <strong>{stats.inGrace}</strong> barbearia{stats.inGrace !== 1 ? 's' : ''} em período de carência — acesso parcial ativo
+              </span>
+            </div>
+          )}
+          {stats.fullyLocked > 0 && (
+            <div className="flex items-center gap-3 bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3 text-sm text-red-300">
+              <Lock size={15} className="shrink-0" />
+              <span>
+                <strong>{stats.fullyLocked}</strong> barbearia{stats.fullyLocked !== 1 ? 's' : ''} com acesso <strong>completamente bloqueado</strong>
+              </span>
+            </div>
+          )}
+        </div>
 
         {/* Charts section */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-8">
@@ -369,7 +502,8 @@ export function AdminClient({ barbershops: initial, adminEmail }: Props) {
               className="w-full bg-zinc-900 border border-zinc-800 rounded-xl pl-9 pr-4 py-2.5 text-sm text-white placeholder:text-zinc-600 focus:border-amber-500 focus:outline-none"
             />
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            {/* Plan filter */}
             <div className="flex bg-zinc-900 border border-zinc-800 rounded-xl p-1 gap-1">
               {(['all', 'free', 'pro', 'premium'] as const).map(p => (
                 <button
@@ -384,6 +518,19 @@ export function AdminClient({ barbershops: initial, adminEmail }: Props) {
                 </button>
               ))}
             </div>
+            {/* Sub status filter */}
+            <select
+              value={subFilter}
+              onChange={e => setSubFilter(e.target.value as SubFilter)}
+              className="bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-1.5 text-xs text-zinc-300 focus:border-amber-500 focus:outline-none"
+            >
+              <option value="all">Todos os status</option>
+              <option value="active">Assinatura ativa</option>
+              <option value="expiring">Expirando (7 dias)</option>
+              <option value="grace">Em carência</option>
+              <option value="locked">Bloqueados</option>
+              <option value="expired">Expirado</option>
+            </select>
             <button
               onClick={exportCSV}
               title="Exportar CSV"
@@ -397,14 +544,15 @@ export function AdminClient({ barbershops: initial, adminEmail }: Props) {
         {/* Table */}
         <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
           <div className="overflow-x-auto">
-            <div className="min-w-[720px]">
+            <div className="min-w-[760px]">
 
               {/* Header */}
-              <div className="grid grid-cols-[1fr_180px_100px_130px_70px_60px] gap-3 px-5 py-3 border-b border-zinc-800 bg-zinc-800/30">
-                <span className="text-xs font-medium text-zinc-500">Barbearia</span>
+              <div className="grid grid-cols-[1fr_160px_100px_140px_160px_70px_60px] gap-3 px-5 py-3 border-b border-zinc-800 bg-zinc-800/30">
+                <SortHeader label="Barbearia"   sortKey="name"         current={sortKey} dir={sortDir} onSort={toggleSort} />
                 <span className="text-xs font-medium text-zinc-500">E-mail do dono</span>
-                <span className="text-xs font-medium text-zinc-500">Plano</span>
+                <SortHeader label="Plano"       sortKey="plan"         current={sortKey} dir={sortDir} onSort={toggleSort} />
                 <span className="text-xs font-medium text-zinc-500">Status trial</span>
+                <SortHeader label="Assinatura"  sortKey="subscription" current={sortKey} dir={sortDir} onSort={toggleSort} />
                 <span className="text-xs font-medium text-zinc-500 text-center">Ativa</span>
                 <span className="text-xs font-medium text-zinc-500 text-center">Ação</span>
               </div>
@@ -417,14 +565,24 @@ export function AdminClient({ barbershops: initial, adminEmail }: Props) {
                   {filtered.map(b => {
                     const expired  = isTrialExpired(b)
                     const daysLeft = b.plan === 'free' && !expired ? trialDaysLeft(b) : null
+                    const inGrace  = isGracePeriod(b)
+                    const locked   = isFullyLocked(b)
+                    const graceDays = gracePeriodDaysLeft(b)
 
                     return (
-                      <div key={b.id} className="grid grid-cols-[1fr_180px_100px_130px_70px_60px] gap-3 px-5 py-3.5 hover:bg-zinc-800/20 transition-colors items-center">
+                      <div key={b.id} className="grid grid-cols-[1fr_160px_100px_140px_160px_70px_60px] gap-3 px-5 py-3.5 hover:bg-zinc-800/20 transition-colors items-center">
 
                         {/* Nome + slug */}
                         <div className="min-w-0">
                           <p className="text-sm font-medium text-white truncate">{b.name}</p>
-                          <p className="text-xs text-zinc-600 truncate">/book/{b.slug}</p>
+                          <a
+                            href={`/book/${b.slug}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs text-zinc-600 hover:text-zinc-400 truncate transition-colors"
+                          >
+                            /book/{b.slug}
+                          </a>
                         </div>
 
                         {/* E-mail */}
@@ -452,9 +610,43 @@ export function AdminClient({ barbershops: initial, adminEmail }: Props) {
                               daysLeft <= 7 ? 'text-orange-400' : 'text-yellow-400'
                             )}>
                               <Clock size={12} />
-                              {daysLeft} dia{daysLeft !== 1 ? 's' : ''} restante{daysLeft !== 1 ? 's' : ''}
+                              {daysLeft} dia{daysLeft !== 1 ? 's' : ''}
                             </span>
                           ) : null}
+                        </div>
+
+                        {/* Subscription status */}
+                        <div>
+                          {b.plan === 'free' ? (
+                            <span className="text-xs text-zinc-600">—</span>
+                          ) : locked ? (
+                            <span className="flex items-center gap-1 text-xs text-red-400">
+                              <Lock size={12} /> Bloqueado
+                            </span>
+                          ) : inGrace ? (
+                            <span className="flex items-center gap-1 text-xs text-orange-400">
+                              <Timer size={12} /> Carência ({graceDays}d)
+                            </span>
+                          ) : !b.subscription_ends_at ? (
+                            <span className="text-xs text-zinc-600">Sem data</span>
+                          ) : isSubscriptionExpired(b) ? (
+                            <span className="flex items-center gap-1 text-xs text-red-400">
+                              <XCircle size={12} /> Expirada
+                            </span>
+                          ) : (() => {
+                            const d = subscriptionDaysLeft(b)
+                            return (
+                              <div>
+                                <span className={cn('flex items-center gap-1 text-xs', d <= 7 ? 'text-orange-400' : 'text-green-400')}>
+                                  <Clock size={12} />
+                                  {d} dia{d !== 1 ? 's' : ''}
+                                </span>
+                                <p className="text-[10px] text-zinc-600 mt-0.5">
+                                  {new Date(b.subscription_ends_at!).toLocaleDateString('pt-BR')}
+                                </p>
+                              </div>
+                            )
+                          })()}
                         </div>
 
                         {/* Toggle ativa */}
@@ -504,7 +696,7 @@ export function AdminClient({ barbershops: initial, adminEmail }: Props) {
       {editTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setEditTarget(null)} />
-          <div className="relative bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-sm p-6 shadow-2xl">
+          <div className="relative bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-sm p-6 shadow-2xl overflow-y-auto max-h-[90vh]">
 
             <div className="flex items-start justify-between mb-5">
               <div>
@@ -558,6 +750,65 @@ export function AdminClient({ barbershops: initial, adminEmail }: Props) {
                 />
               </div>
 
+              {/* Subscription period + end date */}
+              {editPlan !== 'free' && (
+                <>
+                  <div>
+                    <label className="text-xs font-medium text-zinc-400 block mb-2">Período de assinatura</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {(Object.keys(BILLING_PERIODS) as SubscriptionPeriod[]).map(p => (
+                        <button
+                          key={p}
+                          type="button"
+                          onClick={() => setEditSubPeriod(p)}
+                          className={cn(
+                            'py-2 px-3 rounded-xl border text-xs font-medium transition-all text-left',
+                            editSubPeriod === p
+                              ? 'bg-amber-500 border-amber-500 text-black'
+                              : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:border-zinc-500'
+                          )}
+                        >
+                          <div>{BILLING_PERIODS[p].label}</div>
+                          {BILLING_PERIODS[p].discount > 0 && (
+                            <div className="text-[10px] opacity-70 mt-0.5">{BILLING_PERIODS[p].discount}% off</div>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-zinc-400 block mb-2">Assinatura válida até</label>
+                    <input
+                      type="date"
+                      value={editSubEndsAt}
+                      onChange={e => setEditSubEndsAt(e.target.value)}
+                      className="input-base text-sm"
+                    />
+                    <p className="text-xs text-zinc-600 mt-1">Deixe vazio se não tiver data definida.</p>
+                  </div>
+                </>
+              )}
+
+              {/* Grace period */}
+              <div>
+                <label className="text-xs font-medium text-zinc-400 block mb-2">
+                  Carência após vencimento (dias)
+                  <span className="text-zinc-600 ml-1">— padrão: {GRACE_PERIOD_DAYS} dias</span>
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  max={365}
+                  value={editGraceDays}
+                  onChange={e => setEditGraceDays(e.target.value)}
+                  placeholder={String(GRACE_PERIOD_DAYS)}
+                  className="input-base text-sm"
+                />
+                <p className="text-xs text-zinc-600 mt-1">
+                  Deixe em branco para usar o padrão global ({GRACE_PERIOD_DAYS} dias).
+                </p>
+              </div>
+
               {/* Ativa */}
               <div className="flex items-center justify-between py-3 border-t border-zinc-800">
                 <div>
@@ -602,6 +853,32 @@ export function AdminClient({ barbershops: initial, adminEmail }: Props) {
         </div>
       )}
     </div>
+  )
+}
+
+// ─── SortHeader ───────────────────────────────────────────────────────────────
+
+function SortHeader({ label, sortKey, current, dir, onSort }: {
+  label: string
+  sortKey: SortKey
+  current: SortKey
+  dir: SortDir
+  onSort: (k: SortKey) => void
+}) {
+  const active = current === sortKey
+  return (
+    <button
+      onClick={() => onSort(sortKey)}
+      className="flex items-center gap-1 text-xs font-medium text-zinc-500 hover:text-zinc-300 transition-colors w-fit"
+    >
+      {label}
+      {active
+        ? dir === 'asc'
+          ? <ChevronUp size={11} className="text-amber-500" />
+          : <ChevronDown size={11} className="text-amber-500" />
+        : <ChevronsUpDown size={11} className="opacity-40" />
+      }
+    </button>
   )
 }
 
