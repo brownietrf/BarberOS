@@ -1,9 +1,9 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
-import { ClientesClient } from './client'
+import { FidelidadeClient } from './client'
 import type { LoyaltyProgram, LoyaltyReward } from '@/types/database'
 
-export default async function ClientesPage() {
+export default async function FidelidadePage() {
   const supabase = await createClient()
 
   const { data: { user } } = await supabase.auth.getUser()
@@ -11,18 +11,13 @@ export default async function ClientesPage() {
 
   const { data: barbershop } = await supabase
     .from('barbershops')
-    .select('id')
+    .select('id, name')
     .eq('owner_id', user.id)
     .single()
 
   if (!barbershop) redirect('/onboarding')
 
-  const [{ data: customers }, { data: loyaltyProgram }, { data: loyaltyRewards }] = await Promise.all([
-    supabase
-      .from('customers')
-      .select('*')
-      .eq('barbershop_id', barbershop.id)
-      .order('last_visit_at', { ascending: false, nullsFirst: false }),
+  const [{ data: program }, { data: rewards }, { data: customers }] = await Promise.all([
     supabase
       .from('loyalty_programs')
       .select('*')
@@ -30,16 +25,22 @@ export default async function ClientesPage() {
       .maybeSingle(),
     supabase
       .from('loyalty_rewards')
-      .select('customer_id, visits_at_redemption, redeemed_at')
-      .eq('barbershop_id', barbershop.id),
+      .select('*')
+      .eq('barbershop_id', barbershop.id)
+      .order('redeemed_at', { ascending: false }),
+    supabase
+      .from('customers')
+      .select('id, name, phone, total_visits')
+      .eq('barbershop_id', barbershop.id)
+      .order('total_visits', { ascending: false }),
   ])
 
   return (
-    <ClientesClient
+    <FidelidadeClient
       barbershopId={barbershop.id}
+      initialProgram={program as LoyaltyProgram | null}
+      initialRewards={(rewards ?? []) as LoyaltyReward[]}
       initialCustomers={customers ?? []}
-      loyaltyProgram={(loyaltyProgram ?? null) as LoyaltyProgram | null}
-      loyaltyRewards={(loyaltyRewards ?? []) as LoyaltyReward[]}
     />
   )
 }

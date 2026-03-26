@@ -13,7 +13,7 @@ src/
 │   ├── page.tsx                # Redireciona → /login
 │   ├── globals.css             # Estilos globais: Tailwind + .input-base + html overflow-x hidden
 │   ├── login/page.tsx          # Auth: login | cadastro | recuperar senha
-│   ├── onboarding/page.tsx     # Wizard 3 passos: cria barbearia no Supabase
+│   ├── onboarding/page.tsx     # Wizard 3 passos: cria barbearia + referral_code + campo referred_by
 │   ├── reset-password/page.tsx # Troca de senha via exchangeCodeForSession
 │   ├── book/[slug]/            # Página pública de agendamento (sem auth)
 │   │   ├── page.tsx            # Server: SEO og:*/twitter:card + viewport PWA + manifest link
@@ -27,11 +27,15 @@ src/
 │       │   ├── page.tsx        # Server: busca appointments_full + blocked_slots
 │       │   └── client.tsx      # Client: visão dia/semana/mês, CRUD completo, botão refresh
 │       ├── clientes/
-│       │   ├── page.tsx        # Server: busca customers ordenados por last_visit_at
-│       │   └── client.tsx      # Client: tabela, busca, sort, CRUD + máscara telefone
+│       │   ├── page.tsx        # Server: customers + loyalty_program + loyalty_rewards
+│       │   └── client.tsx      # Client: tabela, busca, sort, CRUD + progresso de fidelidade
+│       ├── fidelidade/
+│       │   ├── page.tsx        # Server: loyalty_program + loyalty_rewards + customers
+│       │   └── client.tsx      # Client: ativar/configurar programa, lista de aptos, resgates
 │       ├── planos/
-│       │   ├── page.tsx        # Server: busca barbershop
-│       │   └── client.tsx      # Client: cards de planos, banner status trial, texto vantagens
+│       │   ├── page.tsx        # Server: barbershop + referrals do indicador
+│       │   ├── client.tsx      # Client: cards planos, banner status, código indicação, bônus
+│       │   └── actions.ts      # Server Action: updateSubscriptionPeriod
 │       ├── relatorios/
 │       │   ├── page.tsx        # Server: busca appointments_full + período anterior + clientes
 │       │   └── client.tsx      # Client: cards+delta, recharts timeline, insights, CSV/PDF, gate Pro
@@ -43,17 +47,19 @@ src/
 │           └── client.tsx      # Client: logo upload (Storage), dados gerais, horários, link Book
 ├── components/
 │   ├── layout/sidebar.tsx      # Nav responsiva: desktop sidebar + mobile drawer
-│   │                           # Logo mobile = <Link href="/dashboard">
+│   │                           # Items: Visão Geral, Agenda, Clientes, Serviços,
+│   │                           #        Relatórios, Fidelidade, Configurações
 │   └── ui/modal.tsx            # Modal reutilizável (backdrop, escape, scroll lock)
 ├── lib/
 │   ├── supabase/
 │   │   ├── client.ts           # createClient() — uso em 'use client' (browser)
 │   │   ├── server.ts           # createClient() async — uso em Server Components / API
 │   │   └── admin.ts            # adminClient — service role key, operações privilegiadas
-│   ├── plans.ts                # PLANS config + isTrialActive/Expired/trialDaysLeft
+│   ├── plans.ts                # PLANS + BILLING_PERIODS + todos os helpers de plano/assinatura
 │   ├── rate-limit.ts           # Sliding window rate limiter in-memory (20 req/min/IP)
 │   └── utils.ts                # cn() — merge de classes Tailwind
-├── types/database.ts           # Todos os types/interfaces do banco + AppointmentFull
+├── types/database.ts           # Types: Barbershop, Service, Customer, Appointment,
+│                               # AppointmentFull, LoyaltyProgram, LoyaltyReward, Referral
 └── middleware.ts               # Rate limit /book/*, proteção /dashboard/*, /onboarding/*, /admin/*
 ```
 
@@ -65,13 +71,16 @@ src/
 
 | Tabela | Descrição |
 |---|---|
-| `barbershops` | Dados da barbearia (dono, slug, horários, plano, trial_ends_at) |
+| `barbershops` | Dados da barbearia (dono, slug, horários, plano, trial, assinatura, indicação) |
 | `services` | Catálogo de serviços (preço, duração, categorias múltiplas) |
 | `customers` | Clientes da barbearia (nome, telefone, total_visits) |
 | `appointments` | Agendamentos (status, fonte, cliente, serviço, horários) |
 | `blocked_slots` | Bloqueios de horário (sem agendamento) |
 | `bot_sessions` | Estado da conversa do bot WhatsApp por telefone |
 | `whatsapp_instances` | Instâncias Evolution API (status, qr_code) |
+| `loyalty_programs` | Configuração do programa de fidelidade por barbearia (opt-in) |
+| `loyalty_rewards` | Histórico de resgates de recompensas de fidelidade |
+| `referrals` | Rastreamento de indicações entre barbeiros |
 
 ### View
 - `appointments_full` — JOIN de appointments + customers + services
@@ -91,17 +100,32 @@ src/
 ## Tipos Principais (`types/database.ts`)
 
 ```typescript
-Plan = 'free' | 'pro' | 'premium'
-ServiceCategory = 'Cabelo' | 'Barba' | 'Combo' | 'Químicas' | 'Extra'
+Plan             = 'free' | 'pro' | 'premium'
+SubscriptionPeriod = 'monthly' | '3months' | '6months' | '12months'
+ServiceCategory  = 'Cabelo' | 'Barba' | 'Combo' | 'Químicas' | 'Extra'
 AppointmentStatus = 'pending' | 'confirmed' | 'cancelled' | 'completed' | 'no_show'
 AppointmentSource = 'whatsapp' | 'web' | 'manual'
-WhatsappStatus = 'connected' | 'disconnected' | 'connecting' | 'banned'
+WhatsappStatus   = 'connected' | 'disconnected' | 'connecting' | 'banned'
+ReferralStatus   = 'pending' | 'qualified' | 'rewarded'
 
 WorkingHours = { seg|ter|qua|qui|sex|sab|dom: DaySchedule }
-DaySchedule = { open: string, close: string, active: boolean }
+DaySchedule  = { open: string, close: string, active: boolean }
 
 AppointmentFull extends Appointment {
   customer_name, customer_phone, service_name, service_duration, service_price
+}
+
+LoyaltyProgram {
+  id, barbershop_id, is_active, visits_required, reward_description, created_at, updated_at
+}
+
+LoyaltyReward {
+  id, barbershop_id, customer_id, visits_at_redemption, notes, redeemed_at
+}
+
+Referral {
+  id, referrer_barbershop_id, referred_barbershop_id,
+  status: ReferralStatus, reward_granted_at, created_at
 }
 ```
 
@@ -111,7 +135,7 @@ AppointmentFull extends Appointment {
 
 ```typescript
 interface PlanDef {
-  label, price, priceNote
+  label, price, priceNote, highlight, badge?
   reportPeriods: ('7d' | '30d' | '90d' | '12m')[]
   reportInsights: boolean
   reportDetailed: boolean
@@ -120,13 +144,32 @@ interface PlanDef {
   maxServices: number | null
 }
 
+interface BillingPeriodDef {
+  label: string
+  months: number
+  discount: number   // 0 | 5 | 10 | 20
+  badge?: string
+}
+
 PLANS.free    → trial, acesso total, reportPeriods: ['7d', '30d']
 PLANS.pro     → R$49,90, reportPeriods: ['7d'], reportInsights: false
 PLANS.premium → R$89,90, reportPeriods: ['7d','30d','90d','12m'], tudo incluso
 
-isTrialActive(barbershop)  → boolean
-isTrialExpired(barbershop) → boolean
-trialDaysLeft(barbershop)  → number
+BILLING_PERIODS.monthly  → 0% off
+BILLING_PERIODS.3months  → 5% off
+BILLING_PERIODS.6months  → 10% off
+BILLING_PERIODS.12months → 20% off
+
+// Helpers de trial
+isTrialActive(b)   isTrialExpired(b)   trialDaysLeft(b)
+
+// Helpers de assinatura paga
+isSubscriptionExpired(b)    subscriptionDaysLeft(b)
+isSubscriptionExpiring(b, days=7)
+gracePeriodDaysLeft(b)      isGracePeriod(b)      isFullyLocked(b)
+getSubscriptionPrice(plan, period) → { total, perMonth, discount }
+calcSubscriptionEndsAt(period)     → Date
+GRACE_PERIOD_DAYS = 10
 ```
 
 ---
@@ -189,6 +232,19 @@ import { adminClient } from '@/lib/supabase/admin'
 - `maskPhone(v)` / `normalizePhone(v)` / `isValidPhone(v)` — utilitários de telefone
 - VIP: clientes com `total_visits >= 10`
 - Tabela: `overflow-x-auto` + `min-w-[580px]` para mobile
+- Modal de perfil: exibe barra de progresso de fidelidade (se programa ativo)
+  - Calcula `total_visits - visits_at_redemption_do_último_resgate`
+  - Badge âmbar quando elegível ao resgate
+
+### `dashboard/fidelidade/client.tsx`
+- Toggle ativo/pausado com update otimista
+- Modal de configuração: `visits_required` (mín. 1) + `reward_description`
+  - Cria `loyalty_programs` se não existir; atualiza se já existir
+- Lista de clientes ordenada por `total_visits` descendente
+  - Barra de progresso colorida (zinc → amber quando elegível)
+  - Botão "Resgatar" aparece apenas para clientes elegíveis e programa ativo
+- Resgate: insere em `loyalty_rewards` com `visits_at_redemption = customer.total_visits`
+- Histórico: últimos 20 resgates com nome do cliente e data
 
 ### `dashboard/servicos/client.tsx`
 - Categorias múltiplas por serviço (array `ServiceCategory[]`)
@@ -220,23 +276,32 @@ import { adminClient } from '@/lib/supabase/admin'
 
 ### `dashboard/planos/client.tsx`
 - 3 cards lado a lado (free/pro/premium) — plano atual destacado com borda amber
-- `CurrentPlanBanner`: status contextual (trial ativo/expirando/expirado, ou plano pago)
-- `AdvantagesSection`: texto dinâmico diferente por plano (free = apresentação do BarberOS, pro = destaque Pro + teaser Premium, premium = celebração do plano)
+- Seletor de período de cobrança (monthly/3m/6m/12m) com desconto visível
+- `updateSubscriptionPeriod` — Server Action para salvar período preferido
+- `CurrentPlanBanner`: status contextual (trial ativo/expirando/expirado, plano pago, expirado)
+- `AdvantagesSection`: texto dinâmico diferente por plano
+- `ReferralSection`: código de indicação com botão copiar, bônus ativo se `referral_bonus_ends_at` no futuro, stats (total indicados / assinaram / pendentes)
+
+### `onboarding/page.tsx`
+- 3 steps: dados da barbearia → personalização do bot → tempo de atendimento + código de indicação
+- Gera `referral_code` único no momento do insert (`slug-XXXX`)
+- Valida `referred_by` contra `barbershops.referral_code` antes de inserir
+- Se válido, cria registro em `referrals` com `status = 'pending'`
 
 ### `admin/client.tsx`
 - Stats: 6 cards — total barbearias, em teste, teste expirado, planos pagos, MRR, ARR
 - MRR = Pro × R$49,90 + Premium × R$89,90; ARR = MRR × 12
-- Banner de alerta quando há barbearias com trial expirando em ≤ 7 dias
+- Banner de alerta quando há barbearias com trial ou assinatura expirando em ≤ 7 dias
 - Gráfico de crescimento: `BarChart` recharts, barbearias criadas por mês (últimos 12 meses)
 - Gráfico de mix de planos: `PieChart` donut com legenda (Free/Pro/Premium)
 - `exportCSV()` — exporta tabela filtrada com BOM para Excel
-- Tabela com `overflow-x-auto` + busca por nome/email/slug + filtro por plano
+- Tabela com `overflow-x-auto` + busca por nome/email/slug + filtro por plano + filtro por status assinatura
 - Toggle ativo/inativo: update otimista + rollback se server action falhar
-- Modal de edição: seletor de plano (3 cards), date input para trial_ends_at, toggle is_active
+- Modal de edição: seletor de plano (3 cards), date inputs para trial_ends_at + subscription_ends_at, subscription_period, grace_period_days, toggle is_active
 
 ### `admin/actions.ts`
 - `verifyAdmin()` — valida `user.email === process.env.ADMIN_EMAIL` antes de qualquer mutação
-- `updatePlan(id, plan, trialEndsAt)` — atualiza plan + trial_ends_at via adminClient
+- `updatePlan(id, plan, trialEndsAt, subscriptionEndsAt?, subscriptionPeriod?, gracePeriodDays?)` — atualiza via adminClient
 - `toggleActive(id, isActive)` — ativa/desativa barbearia via adminClient
 
 ### `book/[slug]/client.tsx` (Booking público)
@@ -313,7 +378,7 @@ WEBHOOK_SECRET=               # opcional: valida origem do webhook da Evolution 
 |---|---|---|---|
 | `logos` | Public | `{barbershop_id}/logo` | Logo da barbearia (upsert) |
 
-Políticas necessárias: SELECT público (anon), INSERT/UPDATE/DELETE apenas para o dono da barbearia (`owner_id = auth.uid()`). Ver SQL completo no histórico de implementação.
+Políticas necessárias: SELECT público (anon), INSERT/UPDATE/DELETE apenas para o dono da barbearia (`owner_id = auth.uid()`).
 
 ---
 
@@ -338,3 +403,4 @@ Código de erro retornado: `23P01` (exclusion_violation) — tratado explicitame
 1. **Deploy** — Vercel (Next.js) + Render (Evolution API)
 2. **WhatsApp Bot** — Evolution API, integração via `bot_sessions` + `whatsapp_instances` (ver `CHATBOT.md`)
 3. **Notificações de lembrete** — cron Vercel às 18h + bot envia via Evolution API
+4. **Aprovação automática de indicações** — quando indicado assinar plano pago via webhook de pagamento

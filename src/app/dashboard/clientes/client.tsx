@@ -5,10 +5,10 @@ import { createClient } from '@/lib/supabase/client'
 import { Modal } from '@/components/ui/modal'
 import {
   Users, Plus, Pencil, Trash2, Search,
-  Phone, Star, StickyNote, ChevronUp, ChevronDown, X
+  Phone, Star, StickyNote, ChevronUp, ChevronDown, X, Gift
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { Customer } from '@/types/database'
+import type { Customer, LoyaltyProgram, LoyaltyReward } from '@/types/database'
 import { formatDistanceToNow, format } from 'date-fns'
 import { ptBR } from 'date-fns/locale'
 
@@ -57,9 +57,30 @@ function SortIcon({ field, sortField, sortDir }: SortIconProps) {
 interface Props {
   barbershopId: string
   initialCustomers: Customer[]
+  loyaltyProgram: LoyaltyProgram | null
+  loyaltyRewards: LoyaltyReward[]
 }
 
-export function ClientesClient({ barbershopId, initialCustomers }: Props) {
+function getLoyaltyProgress(
+  customer: Customer,
+  program: LoyaltyProgram | null,
+  rewards: LoyaltyReward[],
+) {
+  if (!program || !program.is_active) return null
+  const lastRedemption = rewards
+    .filter(r => r.customer_id === customer.id)
+    .sort((a, b) => new Date(b.redeemed_at).getTime() - new Date(a.redeemed_at).getTime())[0]
+  const lastVisitsAt = lastRedemption?.visits_at_redemption ?? 0
+  const current = customer.total_visits - lastVisitsAt
+  return {
+    current: Math.max(0, current),
+    required: program.visits_required,
+    eligible: current >= program.visits_required,
+    reward: program.reward_description,
+  }
+}
+
+export function ClientesClient({ barbershopId, initialCustomers, loyaltyProgram, loyaltyRewards }: Props) {
   const supabase = createClient()
   const [customers, setCustomers] = useState<Customer[]>(initialCustomers)
   const [saving, setSaving] = useState(false)
@@ -453,6 +474,39 @@ export function ClientesClient({ barbershopId, initialCustomers }: Props) {
                 <div className="text-xs text-zinc-500 mt-0.5">Cliente desde</div>
               </div>
             </div>
+
+            {/* Fidelidade */}
+            {(() => {
+              const prog = getLoyaltyProgress(detailModal, loyaltyProgram, loyaltyRewards)
+              if (!prog) return null
+              const pct = Math.min((prog.current / prog.required) * 100, 100)
+              return (
+                <div className={cn(
+                  'border rounded-lg p-3',
+                  prog.eligible
+                    ? 'bg-amber-500/5 border-amber-500/20'
+                    : 'bg-zinc-800/50 border-zinc-700'
+                )}>
+                  <p className="text-xs font-medium mb-2 flex items-center gap-1.5">
+                    <Gift size={11} className={prog.eligible ? 'text-amber-400' : 'text-zinc-500'} />
+                    <span className={prog.eligible ? 'text-amber-400' : 'text-zinc-500'}>
+                      {prog.eligible ? `Apto ao resgate: ${prog.reward}` : 'Progresso de fidelidade'}
+                    </span>
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 h-2 bg-zinc-700 rounded-full overflow-hidden">
+                      <div
+                        className={cn('h-full rounded-full transition-all', prog.eligible ? 'bg-amber-500' : 'bg-zinc-500')}
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                    <span className={cn('text-xs tabular-nums font-medium', prog.eligible ? 'text-amber-400' : 'text-zinc-400')}>
+                      {prog.current}/{prog.required}
+                    </span>
+                  </div>
+                </div>
+              )
+            })()}
 
             {detailModal.notes && (
               <div className="bg-zinc-800/50 border border-zinc-700 rounded-lg p-3">

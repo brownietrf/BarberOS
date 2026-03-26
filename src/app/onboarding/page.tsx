@@ -27,6 +27,7 @@ export default function OnboardingPage() {
     address: '',
     city: '',
     slot_duration: '30',
+    referred_by: '',
   })
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) {
@@ -41,6 +42,8 @@ export default function OnboardingPage() {
     if (!user) { router.push('/login'); return }
 
     const slug = slugify(form.name)
+    // Gera um código de indicação único para esta barbearia
+    const referralCode = `${slug.slice(0, 8)}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`
 
     // Verifica se slug já existe e adiciona sufixo aleatório se necessário
     const { data: existing } = await supabase
@@ -53,7 +56,24 @@ export default function OnboardingPage() {
       ? `${slug}-${Math.random().toString(36).slice(2, 6)}`
       : slug
 
-    const { error: insertError } = await supabase
+    // Valida código de indicação (se informado)
+    let validReferredBy: string | null = null
+    if (form.referred_by.trim()) {
+      const { data: referrer } = await supabase
+        .from('barbershops')
+        .select('id, referral_code')
+        .eq('referral_code', form.referred_by.trim().toUpperCase())
+        .single()
+      if (referrer) {
+        validReferredBy = form.referred_by.trim().toUpperCase()
+      } else {
+        setError('Código de indicação inválido. Verifique e tente novamente.')
+        setLoading(false)
+        return
+      }
+    }
+
+    const { data: newBarbershop, error: insertError } = await supabase
       .from('barbershops')
       .insert({
         owner_id: user.id,
@@ -65,12 +85,32 @@ export default function OnboardingPage() {
         address: form.address || null,
         city: form.city || null,
         slot_duration: parseInt(form.slot_duration),
+        referral_code: referralCode,
+        referred_by: validReferredBy,
       })
+      .select('id')
+      .single()
 
-    if (insertError) {
+    if (insertError || !newBarbershop) {
       setError('Erro ao salvar. Tente novamente.')
       setLoading(false)
       return
+    }
+
+    // Se veio por indicação, registra o referral
+    if (validReferredBy) {
+      const { data: referrer } = await supabase
+        .from('barbershops')
+        .select('id')
+        .eq('referral_code', validReferredBy)
+        .single()
+      if (referrer) {
+        await supabase.from('referrals').insert({
+          referrer_barbershop_id: referrer.id,
+          referred_barbershop_id: newBarbershop.id,
+          status: 'pending',
+        })
+      }
     }
 
     router.push('/dashboard')
@@ -244,6 +284,18 @@ export default function OnboardingPage() {
                   <option value="60">60 minutos (serviço completo)</option>
                 </select>
                 <p className="text-zinc-600 text-xs">Você pode definir durações diferentes por serviço depois</p>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-sm text-zinc-400">Código de indicação <span className="text-zinc-600">(opcional)</span></label>
+                <input
+                  name="referred_by"
+                  value={form.referred_by}
+                  onChange={handleChange}
+                  placeholder="Ex: JOAO-A1B2"
+                  className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2.5 text-white text-sm placeholder:text-zinc-600 focus:outline-none focus:border-amber-500 transition-colors"
+                />
+                <p className="text-zinc-600 text-xs">Se outro barbeiro te indicou o BarberOS, insira o código dele</p>
               </div>
 
               <div className="bg-amber-500/5 border border-amber-500/20 rounded-lg p-3">

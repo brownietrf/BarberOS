@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import { PlanosClient } from './client'
+import type { Referral } from '@/types/database'
 
 export default async function PlanosPage() {
   const supabase = await createClient()
@@ -15,5 +16,11 @@ export default async function PlanosPage() {
 
   if (!barbershop) redirect('/onboarding')
 
-  return <PlanosClient barbershop={barbershop} />
+  const { data: referrals } = await supabase
+    .from('referrals')
+    .select('id, referred_barbershop_id, status, reward_granted_at, created_at')
+    .eq('referrer_barbershop_id', barbershop.id)
+    .order('created_at', { ascending: false })
+
+  return <PlanosClient barbershop={barbershop} referrals={(referrals ?? []) as Referral[]} />
 }

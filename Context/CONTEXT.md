@@ -17,13 +17,14 @@ src/
       agenda/             → page.tsx (server) + client.tsx
       clientes/           → page.tsx (server) + client.tsx
       configuracoes/      → page.tsx (server) + client.tsx
-      planos/             → page.tsx (server) + client.tsx (comparação de planos)
+      fidelidade/         → page.tsx (server) + client.tsx (programa de fidelidade)
+      planos/             → page.tsx (server) + client.tsx + actions.ts (comparação + indicações)
       relatorios/         → page.tsx (server) + client.tsx (analytics com gate de plano)
       servicos/           → page.tsx (server) + client.tsx
       layout.tsx          → sidebar + proteção de rota
       page.tsx            → visão geral com stats + banner do plano
     login/                → page.tsx (auth completo)
-    onboarding/           → page.tsx (3 steps)
+    onboarding/           → page.tsx (3 steps + campo de código de indicação)
     reset-password/       → page.tsx
   components/
     layout/sidebar.tsx    → desktop sidebar + mobile drawer (logo é link para /dashboard)
@@ -33,28 +34,34 @@ src/
     plans.ts              → definição dos planos, features, helpers (isTrialActive etc.)
     rate-limit.ts         → rate limiter in-memory (sliding window por IP)
     utils.ts (cn)
-  types/database.ts       → inclui AppointmentFull
+  types/database.ts       → inclui AppointmentFull, LoyaltyProgram, LoyaltyReward, Referral
   middleware.ts           → rate limit /book/*, protege /dashboard/*, /onboarding/*, /admin/*
 public/
   icons/                  → icon-192.png + icon-512.png (fallback PWA — adicionar manualmente)
   og-default.png          → imagem Open Graph padrão 1200×630 (adicionar manualmente)
+supabase/
+  migrations/             → arquivos SQL de migração
+    20260326_loyalty_and_referrals.sql
 ```
 
 ## Banco de dados (Supabase — sa-east-1)
 Tabelas: barbershops, services, customers, appointments,
-         blocked_slots, bot_sessions, whatsapp_instances
+         blocked_slots, bot_sessions, whatsapp_instances,
+         loyalty_programs, loyalty_rewards, referrals
+
 View: appointments_full (join com customers e services — SELECT público)
+
 Functions: get_available_slots (única versão — não criar overloads!),
            upsert_customer, upsert_bot_session,
            get_pending_reminders, handle_appointment_completed, cleanup_old_sessions
 
 ## O que está pronto
 - Auth completo (login, cadastro, recuperação de senha, templates de e-mail)
-- Onboarding (3 steps)
+- Onboarding (3 steps + campo opcional de código de indicação)
 - Layout do painel com sidebar responsiva (mobile: logo clicável → /dashboard)
 - Visão geral com stats + banner do plano atual com botão "Ver planos"
 - Serviços (CRUD, categorias múltiplas, filtros, detecção de duplicatas, templates de serviços sugeridos)
-- Clientes (tabela, busca, perfil, máscara de telefone, VIP)
+- Clientes (tabela, busca, perfil, máscara de telefone, VIP, barra de progresso de fidelidade no modal)
 - Configurações (dados da barbearia, upload de logo, preview do bot, horários, link do Book com compartilhamento)
 - Agenda (dia/semana/mês, criar/editar/cancelar agendamentos, bloqueio de horários, botão de refresh)
 - Agenda visão dia ordenada por horário (agendamentos + bloqueios mesclados)
@@ -63,15 +70,20 @@ Functions: get_available_slots (única versão — não criar overloads!),
 - Book PWA — manifest.webmanifest dinâmico por slug, themeColor âmbar, appleWebApp
 - Rate limiting — 20 req/min por IP nas rotas /book/* (in-memory, sem dependência externa)
 - Relatórios (/dashboard/relatorios) — cards+delta, gráfico recharts, insights, CSV/PDF, gate por plano
-- Planos (/dashboard/planos) — tabela comparativa, banner de status, texto de vantagens dinâmico
+- Planos (/dashboard/planos) — tabela comparativa, banner de status, texto de vantagens dinâmico, código de indicação, bônus ativo
 - Painel Admin (/admin) — MRR/ARR, alerta trial expirando, gráfico de crescimento, mix de planos, CSV
-- Sistema de planos (lib/plans.ts) — free trial / pro / premium com feature gates
+- Sistema de planos (lib/plans.ts) — free trial / pro / premium com feature gates + período de cobrança + carência
 - Supabase Storage — bucket `logos` para upload de logo por barbearia
+- **Programa de Fidelidade** (/dashboard/fidelidade) — configurável pelo barbeiro, progresso por cliente, histórico de resgates
+- **Sistema de Indicação** — código único por barbearia, registro de indicações, bônus de 1 mês ao indicador
 
 ## Planos
 - free  → trial por período definido pelo admin, acesso 100%, chatbot conforme admin
 - pro   → R$ 49,90/mês, clientes ilimitados, relatórios 7d básico, chatbot básico
 - premium → R$ 89,90/mês, relatórios completos (7d/30d/90d/12m) com insights, chatbot completo
+
+Períodos de cobrança: monthly / 3months (5% off) / 6months (10% off) / 12months (20% off)
+Carência após expiração: grace_period_days (default 10) — agenda continua, features bloqueadas
 
 ## Variáveis de ambiente necessárias
 ```env
@@ -89,6 +101,7 @@ EVOLUTION_API_KEY=
 1. Deploy (Vercel + Render para Evolution API)
 2. WhatsApp Bot (Evolution API — ver CHATBOT.md para prompt completo de implementação)
 3. Notificações de lembrete (cron Vercel + bot)
+4. Aprovação automática de indicações (quando indicado assinar plano pago)
 
 ## Padrão de código usado
 - Server Components buscam dados e passam como props

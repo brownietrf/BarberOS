@@ -54,6 +54,12 @@ import { adminClient } from '@/lib/supabase/admin'
 | `is_active` | boolean | Barbearia ativa |
 | `plan` | text | `'free'` \| `'pro'` \| `'premium'` |
 | `trial_ends_at` | timestamptz | Fim do período trial |
+| `subscription_ends_at` | timestamptz | Fim da assinatura paga |
+| `subscription_period` | text | `'monthly'` \| `'3months'` \| `'6months'` \| `'12months'` |
+| `grace_period_days` | int | Dias de carência após expiração (default: 10) |
+| `referral_code` | text UNIQUE | Código de indicação desta barbearia |
+| `referred_by` | text | Código de indicação usado no cadastro |
+| `referral_bonus_ends_at` | timestamptz | Até quando o bônus de indicação está ativo |
 | `created_at` | timestamptz | |
 | `updated_at` | timestamptz | |
 
@@ -160,6 +166,64 @@ import { adminClient } from '@/lib/supabase/admin'
 | `connected_at` | timestamptz | |
 | `created_at` | timestamptz | |
 | `updated_at` | timestamptz | |
+
+---
+
+### `loyalty_programs`
+Configuração do programa de fidelidade (uma por barbearia, opt-in pelo barbeiro).
+
+| Coluna | Tipo | Descrição |
+|---|---|---|
+| `id` | uuid PK | |
+| `barbershop_id` | uuid FK → barbershops UNIQUE | |
+| `is_active` | boolean | Programa ativo ou pausado |
+| `visits_required` | int | Visitas necessárias para ganhar recompensa (mín. 1) |
+| `reward_description` | text | Descrição da recompensa (ex: "1 corte grátis") |
+| `created_at` | timestamptz | |
+| `updated_at` | timestamptz | |
+
+---
+
+### `loyalty_rewards`
+Histórico de resgates de recompensas de fidelidade.
+
+| Coluna | Tipo | Descrição |
+|---|---|---|
+| `id` | uuid PK | |
+| `barbershop_id` | uuid FK → barbershops | |
+| `customer_id` | uuid FK → customers | |
+| `visits_at_redemption` | int | `total_visits` do cliente no momento do resgate |
+| `notes` | text | Observação opcional do barbeiro |
+| `redeemed_at` | timestamptz | Data/hora do resgate |
+
+**Lógica de progresso:**
+```typescript
+// visitas desde o último resgate = total_visits - visits_at_redemption do último reward
+// se nunca resgatou: progresso = total_visits
+const lastReward = rewards.filter(r => r.customer_id === id).sort(desc)[0]
+const progress   = customer.total_visits - (lastReward?.visits_at_redemption ?? 0)
+const eligible   = progress >= program.visits_required
+```
+
+---
+
+### `referrals`
+Rastreamento de indicações entre barbeiros.
+
+| Coluna | Tipo | Descrição |
+|---|---|---|
+| `id` | uuid PK | |
+| `referrer_barbershop_id` | uuid FK → barbershops (SET NULL on delete) | Quem indicou |
+| `referred_barbershop_id` | uuid FK → barbershops (SET NULL on delete) | Quem foi indicado |
+| `status` | text | `'pending'` \| `'qualified'` \| `'rewarded'` |
+| `reward_granted_at` | timestamptz | Quando o bônus foi concedido ao indicador |
+| `created_at` | timestamptz | |
+
+**Fluxo de indicação:**
+1. Barbeiro A tem `referral_code` gerado no onboarding (ex: `joao-A1B2`)
+2. Barbeiro B se cadastra informando o código de A no campo "Código de indicação"
+3. O onboarding cria registro em `referrals` com `status = 'pending'` e preenche `referred_by` em B
+4. Admin aprova via painel → `status = 'rewarded'`, `referral_bonus_ends_at` de A é setado +1 mês
 
 ---
 
@@ -276,6 +340,51 @@ const available = (data as { slot_time: string; available: boolean }[])
 |---|---|---|
 | `owner can manage whatsapp instance` | ALL | barbershop pertence ao `auth.uid()` |
 
+### `loyalty_programs`
+| Policy | Cmd | Regra |
+|---|---|---|
+| `owner can manage loyalty program` | ALL | barbershop pertence ao `auth.uid()` |
+| `public can view active loyalty programs` | SELECT | `is_active = true` (anon) |
+
+### `loyalty_rewards`
+| Policy | Cmd | Regra |
+|---|---|---|
+| `owner can manage loyalty rewards` | ALL | barbershop pertence ao `auth.uid()` |
+
+### `referrals`
+| Policy | Cmd | Regra |
+|---|---|---|
+| `referrer can view own referrals` | SELECT | `referrer_barbershop_id` pertence ao `auth.uid()` |
+| `authenticated can insert referral` | INSERT | `referred_barbershop_id` pertence ao `auth.uid()` — permite o indicado criar o registro no onboarding |
+| `service role can manage referrals` | ALL | `auth.role() = 'service_role'` |
+
+---
+
+## Migração: Fidelidade + Indicações
+
+Arquivo: `supabase/migrations/20260326_loyalty_and_referrals.sql`
+
+Execute no SQL Editor do Supabase. Inclui:
+- `ALTER TABLE barbershops ADD COLUMN ...` (referral_code, referred_by, referral_bonus_ends_at)
+- `CREATE TABLE loyalty_programs` + RLS
+- `CREATE TABLE loyalty_rewards` + RLS + índice
+- `CREATE TABLE referrals` + RLS + índices
+
+---
+
+## Constraint anti-race condition em agendamentos
+
+```sql
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+ALTER TABLE appointments ADD CONSTRAINT no_overlap_appointments
+EXCLUDE USING gist (
+  barbershop_id WITH =,
+  tstzrange(start_time, end_time, '[)') WITH &&
+)
+WHERE (status IN ('pending', 'confirmed'));
+```
+Código de erro: `23P01` (exclusion_violation) — tratado explicitamente no Book e na Agenda.
+
 ---
 
 ## Padrões de Query
@@ -305,19 +414,30 @@ const { data } = await supabase
   .lte('start_time', endOfDay.toISOString())
   .order('start_time', { ascending: true })
 
-// Relatórios — período baseado no plano
-const defaultPeriod = PLANS[barbershop.plan].reportPeriods[0]  // '7d' para pro
-const start = subDays(new Date(), defaultPeriod === '7d' ? 7 : 30)
+// Programa de fidelidade da barbearia
 const { data } = await supabase
-  .from('appointments_full')
-  .select('id, start_time, status, source, customer_name, service_name, service_price')
-  .eq('barbershop_id', id)
-  .gte('start_time', start.toISOString())
+  .from('loyalty_programs')
+  .select('*')
+  .eq('barbershop_id', barbershop.id)
+  .maybeSingle()
+
+// Resgates de fidelidade (para calcular progresso)
+const { data } = await supabase
+  .from('loyalty_rewards')
+  .select('customer_id, visits_at_redemption, redeemed_at')
+  .eq('barbershop_id', barbershop.id)
+
+// Indicações feitas por esta barbearia
+const { data } = await supabase
+  .from('referrals')
+  .select('id, referred_barbershop_id, status, reward_granted_at, created_at')
+  .eq('referrer_barbershop_id', barbershop.id)
+  .order('created_at', { ascending: false })
 
 // Admin — buscar todas as barbearias (service role, sem RLS)
 const { data } = await adminClient
   .from('barbershops')
-  .select('id, name, slug, owner_id, plan, trial_ends_at, is_active, created_at')
+  .select('id, name, slug, owner_id, plan, trial_ends_at, subscription_ends_at, subscription_period, grace_period_days, is_active, created_at')
   .order('created_at', { ascending: false })
 
 // Admin — listar todos os usuários
