@@ -25,12 +25,12 @@
 src/
 ├── app/
 │   ├── admin/                      # Painel administrativo (acesso via ADMIN_EMAIL)
-│   │   ├── page.tsx                # Server: verifica admin + busca todas as barbearias
-│   │   ├── client.tsx              # Client: tabela de usuários, modais, toggles
-│   │   └── actions.ts              # Server Actions: updatePlan, toggleActive (adminClient)
+│   │   ├── page.tsx                # Server: verifica admin + busca barbearias + indicações
+│   │   ├── client.tsx              # Client: stats, gráficos, tabela, seção de indicações, modal de bônus
+│   │   └── actions.ts              # Server Actions: updatePlan, toggleActive, grantReferralBonus
 │   ├── book/[slug]/                # Público — página de agendamento do cliente
 │   │   ├── page.tsx                # Server: SEO og:*/twitter + viewport PWA + manifest link
-│   │   ├── client.tsx              # Client: fluxo 4 etapas + "Adicionar ao calendário"
+│   │   ├── client.tsx              # Client: menu (Agendar/Verificar/Cancelar) + fluxo 4 etapas + lookup por telefone
 │   │   └── manifest.webmanifest/
 │   │       └── route.ts            # Route Handler: manifest PWA dinâmico por slug
 │   ├── dashboard/
@@ -219,6 +219,10 @@ getSubscriptionPrice(plan, period) → { total, perMonth, discount }
 - Funcionalidades: stats globais (MRR/ARR/carência/locked), busca/filtro por plano e status de assinatura,
   toggle ativo/inativo, edição de plano + trial + subscription_ends_at + grace_period_days,
   gráfico de crescimento mensal, mix de planos (donut), exportação CSV
+- **Seção de indicações**: tabela referrer → referred com plano do indicado, status (pending/qualified/rewarded)
+  e data; botão "Dar" nas qualificadas abre modal de concessão de bônus
+- **Modal de bônus**: opções "Mês grátis" (+30 dias na assinatura) ou "Upgrade de plano" (muda plano + +30 dias +
+  seta `referral_bonus_ends_at`); Server Action `grantReferralBonus` atualiza barbershop + marca referral como `rewarded`
 
 ---
 
@@ -235,10 +239,14 @@ getSubscriptionPrice(plan, period) → { total, perMonth, discount }
 ## Sistema de Indicação
 
 - Cada barbearia tem `referral_code` único gerado no onboarding
-- No onboarding, campo opcional "Código de indicação" → registra `referred_by` + cria `referrals`
+- No onboarding, campo opcional "Código de indicação" → registra `referred_by` + cria `referrals` com `status = 'pending'`
 - Barbearia indicadora vê seus indicados e status em `/dashboard/planos`
 - Bônus ativo: `referral_bonus_ends_at` no futuro → banner exibido em Planos
-- Aprovação: admin seta `status = 'rewarded'` + preenche `referral_bonus_ends_at` no indicador
+- Qualificação automática: quando admin muda o plano do indicado para `pro` ou `premium`, `updatePlan` atualiza referrals de `pending` → `qualified`
+- Concessão de bônus (admin): `grantReferralBonus` — escolha entre:
+  - `free_month`: estende `subscription_ends_at` do indicador em +30 dias + seta `referral_bonus_ends_at`
+  - `plan_upgrade`: idem + muda o plano do indicador para o plano escolhido
+  - Em ambos: referral vai para `status = 'rewarded'` + `reward_granted_at`
 
 ---
 
@@ -413,25 +421,28 @@ Classe Tailwind para todos os inputs/textareas do projeto.
 | Clientes | ✅ | CRUD + VIP + busca + sort + progresso de fidelidade no modal |
 | Serviços | ✅ | CRUD + categorias + duplicatas + templates sugeridos (bulk) |
 | Configurações | ✅ | Logo upload (Storage) + dados gerais + horários + link Book |
-| BarberOS Book (`/book/[slug]`) | ✅ | 4 etapas + "Adicionar ao calendário" + rate limiting |
+| BarberOS Book (`/book/[slug]`) | ✅ | Menu (Agendar/Verificar/Cancelar) + 4 etapas + "Adicionar ao calendário" + rate limiting |
 | Book SEO | ✅ | og:* + twitter:card + metadataBase |
 | Book PWA | ✅ | manifest dinâmico por slug + themeColor + appleWebApp |
 | Relatórios | ✅ | Cards+delta + recharts + insights + CSV/PDF + gate plano |
 | Planos (`/dashboard/planos`) | ✅ | Tabela comparativa + períodos + texto dinâmico + indicações |
 | Sistema de planos (`lib/plans.ts`) | ✅ | free/pro/premium + billing periods + grace period |
-| Painel Admin (`/admin`) | ✅ | MRR/ARR + gráficos recharts + CSV + gestão de planos/assinaturas |
+| Painel Admin (`/admin`) | ✅ | MRR/ARR + gráficos recharts + CSV + gestão de planos/assinaturas + indicações + bônus |
 | Rate limiting | ✅ | `lib/rate-limit.ts` + middleware para /book/* |
 | Race condition agendamentos | ✅ | Constraint `no_overlap_appointments` + erro 23P01 tratado |
 | Mobile overflow fix | ✅ | html overflow-x hidden + wrappers nas tabelas |
 | **Programa de Fidelidade** | ✅ | Opt-in, configurável, progresso por cliente, histórico |
-| **Sistema de Indicação** | ✅ | referral_code único, campo no onboarding, bônus ao indicador |
+| **Sistema de Indicação** | ✅ | referral_code único, onboarding, qualificação automática, bônus manual pelo admin |
+| **Book — Verificar/Cancelar** | ✅ | Menu inicial no /book, lookup por telefone, cancelamento com confirmação |
 
 ## O que falta (MVP)
 
 | Módulo | Prioridade | Dependências |
 |---|---|---|
-| Deploy | Alta | Vercel + Render |
+| Deploy | Alta | Vercel + Railway/Render |
 | WhatsApp Bot | Alta | Evolution API no Render (ver CHATBOT.md) |
 | Notificações de lembrete | Média | Bot funcionando + cron Vercel |
-| Aprovação automática de indicações | Média | Webhook de pagamento ou trigger no admin |
+| Gateway de pagamento | Média | Asaas ou Stripe — cobrança e renovação automática |
+| Aprovação automática de indicações | Baixa | Webhook do gateway de pagamento |
+| Policy RLS anon cancel (appointments) | Baixa | Necessária para o cancelamento no Book funcionar |
 | Arquivos estáticos PWA/SEO | Baixa | og-default.png + icons/ (criar manualmente) |

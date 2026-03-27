@@ -223,7 +223,11 @@ Rastreamento de indicações entre barbeiros.
 1. Barbeiro A tem `referral_code` gerado no onboarding (ex: `joao-A1B2`)
 2. Barbeiro B se cadastra informando o código de A no campo "Código de indicação"
 3. O onboarding cria registro em `referrals` com `status = 'pending'` e preenche `referred_by` em B
-4. Admin aprova via painel → `status = 'rewarded'`, `referral_bonus_ends_at` de A é setado +1 mês
+4. Admin muda o plano de B para `pro` ou `premium` → `updatePlan` qualifica automaticamente: `status = 'qualified'`
+5. Admin acessa a seção "Indicações" em `/admin` → botão "Dar" → modal de bônus:
+   - **Mês grátis**: `subscription_ends_at` de A +30 dias + `referral_bonus_ends_at` +30 dias
+   - **Upgrade de plano**: muda `plan` de A + idem acima
+   - `grantReferralBonus` (Server Action): aplica as mudanças em A + marca referral como `status = 'rewarded'` + `reward_granted_at = now()`
 
 ---
 
@@ -322,6 +326,16 @@ const available = (data as { slot_time: string; available: boolean }[])
 |---|---|---|
 | `owner can manage appointments` | ALL | barbershop pertence ao `auth.uid()` |
 | `public can insert appointment` | INSERT | `true` (anon) — necessário para Book |
+| `anon can cancel appointments` | UPDATE | `true` (anon) — necessário para "Cancelar Agendamento" no Book |
+
+**Policy de cancelamento anônimo** — execute no SQL Editor:
+```sql
+CREATE POLICY "anon can cancel appointments"
+  ON appointments FOR UPDATE TO anon
+  USING (status IN ('pending', 'confirmed'))
+  WITH CHECK (status = 'cancelled');
+```
+Permite que qualquer usuário anônimo altere `status` de `pending`/`confirmed` para `cancelled`. Só libera essa transição; qualquer outro UPDATE é bloqueado.
 
 ### `blocked_slots`
 | Policy | Cmd | Regra |

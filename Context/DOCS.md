@@ -6,9 +6,9 @@
 src/
 ├── app/
 │   ├── admin/
-│   │   ├── page.tsx            # Server: verifica ADMIN_EMAIL + busca barbershops + auth users
-│   │   ├── client.tsx          # Client: stats+MRR/ARR, gráficos recharts, tabela, CSV export
-│   │   └── actions.ts          # Server Actions: updatePlan, toggleActive (via adminClient)
+│   │   ├── page.tsx            # Server: verifica ADMIN_EMAIL + busca barbershops + auth users + referrals
+│   │   ├── client.tsx          # Client: stats+MRR/ARR, gráficos recharts, tabela, seção indicações, modal bônus
+│   │   └── actions.ts          # Server Actions: updatePlan, toggleActive, grantReferralBonus (via adminClient)
 │   ├── layout.tsx              # Root layout (fontes, metadata global + metadataBase)
 │   ├── page.tsx                # Redireciona → /login
 │   ├── globals.css             # Estilos globais: Tailwind + .input-base + html overflow-x hidden
@@ -17,7 +17,7 @@ src/
 │   ├── reset-password/page.tsx # Troca de senha via exchangeCodeForSession
 │   ├── book/[slug]/            # Página pública de agendamento (sem auth)
 │   │   ├── page.tsx            # Server: SEO og:*/twitter:card + viewport PWA + manifest link
-│   │   ├── client.tsx          # Client: fluxo 4 etapas + "Adicionar ao calendário" (.ics/Share API)
+│   │   ├── client.tsx          # Client: menu (Agendar/Verificar/Cancelar) + fluxo 4 etapas + lookup por telefone
 │   │   └── manifest.webmanifest/
 │   │       └── route.ts        # Route Handler: manifest PWA dinâmico por slug
 │   └── dashboard/
@@ -289,28 +289,46 @@ import { adminClient } from '@/lib/supabase/admin'
 - Se válido, cria registro em `referrals` com `status = 'pending'`
 
 ### `admin/client.tsx`
-- Stats: 6 cards — total barbearias, em teste, teste expirado, planos pagos, MRR, ARR
+- Stats: 8 cards — total barbearias, em trial, trial expirado, planos pagos, MRR, ARR, em carência, bloqueados
 - MRR = Pro × R$49,90 + Premium × R$89,90; ARR = MRR × 12
-- Banner de alerta quando há barbearias com trial ou assinatura expirando em ≤ 7 dias
+- Alertas automáticos quando há barbearias com trial, assinatura expirando em ≤ 7 dias, em carência ou bloqueadas
 - Gráfico de crescimento: `BarChart` recharts, barbearias criadas por mês (últimos 12 meses)
 - Gráfico de mix de planos: `PieChart` donut com legenda (Free/Pro/Premium)
 - `exportCSV()` — exporta tabela filtrada com BOM para Excel
 - Tabela com `overflow-x-auto` + busca por nome/email/slug + filtro por plano + filtro por status assinatura
 - Toggle ativo/inativo: update otimista + rollback se server action falhar
 - Modal de edição: seletor de plano (3 cards), date inputs para trial_ends_at + subscription_ends_at, subscription_period, grace_period_days, toggle is_active
+- **Seção de indicações**: tabela referrer → referred com plano do indicado, status badge (pendente/qualificada/bonificada) e data; qualificadas mostram botão "Dar" bônus
+- **Modal de bônus**: seletor de tipo (mês grátis / upgrade de plano) + seletor do plano de destino se upgrade; chama `grantReferralBonus`; update otimista no estado local
 
 ### `admin/actions.ts`
 - `verifyAdmin()` — valida `user.email === process.env.ADMIN_EMAIL` antes de qualquer mutação
-- `updatePlan(id, plan, trialEndsAt, subscriptionEndsAt?, subscriptionPeriod?, gracePeriodDays?)` — atualiza via adminClient
+- `updatePlan(id, plan, trialEndsAt, subscriptionEndsAt?, subscriptionPeriod?, gracePeriodDays?)` — atualiza via adminClient; qualifica automaticamente indicações pendentes quando plano vai para `pro` ou `premium`
 - `toggleActive(id, isActive)` — ativa/desativa barbearia via adminClient
+- `grantReferralBonus(referralId, referrerBarbershopId, bonusType, upgradePlan?)`:
+  - Busca `subscription_ends_at` atual do indicador
+  - Estende sub em +30 dias (a partir do fim atual se futuro, ou de agora)
+  - `free_month`: mantém plano + seta `referral_bonus_ends_at`
+  - `plan_upgrade`: muda plano + estende sub + seta `referral_bonus_ends_at`
+  - Marca referral como `rewarded` + preenche `reward_granted_at`
 
 ### `book/[slug]/client.tsx` (Booking público)
-- 4 etapas: Serviço → Data/Hora → Dados pessoais → Confirmação
-- Usa `get_available_slots` RPC para carregar horários livres
-- Faz upsert de customer (busca por telefone, insere se não existir)
-- Cria appointment com `source: 'web'`, `status: 'pending'`
-- Erro `23P01` (exclusion violation) → mensagem específica + recarrega slots automaticamente
-- `addToCalendar()`: Web Share API com arquivo `.ics` (mobile) ou download direto (desktop)
+- `mode: null | 'book' | 'check' | 'cancel'` — controla qual tela exibir
+- **Home menu** (`mode === null`): 3 cards com ícone colorido — Agendar (âmbar), Verificar (azul), Cancelar (vermelho)
+- **Agendar** (`mode === 'book'`): 4 etapas — Serviço → Data/Hora → Dados pessoais → Confirmação
+  - Usa `get_available_slots` RPC; faz upsert de customer por telefone
+  - Cria appointment com `source: 'web'`, `status: 'pending'`
+  - Erro `23P01` → mensagem + recarrega slots automaticamente
+  - `addToCalendar()`: Web Share API `.ics` (mobile) ou download direto (desktop)
+  - Step 1 tem botão "Voltar" que retorna ao menu; step 4 "Fazer novo agendamento" também
+- **Verificar** (`mode === 'check'`): campo de telefone → busca customer → lista agendamentos futuros (pending/confirmed)
+  - Estado vazio com mensagem amigável se nenhum agendamento encontrado
+- **Cancelar** (`mode === 'cancel'`): mesmo lookup de telefone + botão "Cancelar" por card → inline confirm "Tem certeza? / Não / Sim, cancelar"
+  - Usa `UPDATE appointments SET status = 'cancelled'` pelo cliente anônimo ⚠️ requer policy RLS (ver SUPABASE.md)
+  - Feedback de sucesso/erro por mensagem inline
+- `openLookup(mode)` — reseta estados de busca ao entrar em check/cancel
+- `handleLookup()`: busca customer por barbershop_id + phone → busca appointments futuros com join em services
+- `handleCancel(id)`: update otimista no estado local + rollback implícito se server retornar erro
 - `today` e `maxDate` via `useState('')` + `useEffect` para evitar hydration mismatch
 
 ### `book/[slug]/page.tsx` (SEO + PWA)
