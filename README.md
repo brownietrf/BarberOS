@@ -14,6 +14,7 @@ Sistema completo de gestão para barbearias. Painel administrativo para o barbei
 | Backend / Auth / DB | Supabase (PostgreSQL + RLS) |
 | Datas | date-fns |
 | Ícones | lucide-react |
+| Gráficos | recharts |
 | Deploy | Vercel (app) + Railway (bot) |
 
 ---
@@ -23,19 +24,19 @@ Sistema completo de gestão para barbearias. Painel administrativo para o barbei
 ### Painel do Barbeiro (`/dashboard`)
 - **Visão Geral** — stats do dia + banner com status do plano e botão "Ver planos"
 - **Agenda** — visualização dia / semana / mês, criar, editar e cancelar agendamentos, bloquear horários. Visão dia ordenada por horário, mesclando agendamentos e bloqueios. Botão de refresh manual
-- **Clientes** — cadastro, busca, ordenação, indicador VIP (10+ visitas), barra de progresso de fidelidade no perfil
+- **Clientes** — cadastro, busca, ordenação, indicador VIP (10+ visitas), barra de progresso de fidelidade no modal de perfil
 - **Serviços** — CRUD com categorias múltiplas, filtros, detecção de duplicatas. Painel de serviços sugeridos (13 templates) com insert em lote — exibido automaticamente para novos usuários
 - **Configurações** — upload de logo (Supabase Storage), dados da barbearia, horários por dia da semana, link do Book com cópia e compartilhamento via WhatsApp
 - **Relatórios** — cards com delta (▲▼ %), gráfico recharts de timeline, insights automáticos, exportação CSV e PDF. Conteúdo gateado por plano (Pro: blur "Recurso Premium")
-- **Fidelidade** — programa de fidelidade opt-in: configurar número de visitas e recompensa, visualizar progresso por cliente, registrar resgates com histórico
-- **Planos** — tabela comparativa free/pro/premium com períodos de cobrança (mensal/3m/6m/12m), código de indicação, bônus ativo
+- **Fidelidade** — programa opt-in: ativar/pausar, configurar número de visitas e descrição da recompensa, acompanhar progresso por cliente, registrar resgates com histórico
+- **Planos** — tabela comparativa free/pro/premium com períodos de cobrança (mensal/3m/6m/12m), código de indicação com cópia, banner de bônus ativo, painel de indicações enviadas com contagem e status
 
 ### BarberOS Book (`/book/[slug]`)
-Página pública de autoatendimento. O cliente acessa pelo link da barbearia e agenda sem precisar de conta:
-1. Escolhe o serviço
-2. Seleciona data e horário disponível (sincronizado com agenda e horários de funcionamento)
-3. Informa nome e WhatsApp
-4. Recebe confirmação na tela com opção "Adicionar ao calendário" (.ics / Web Share API)
+Página pública de autoatendimento. O cliente acessa pelo link da barbearia sem precisar de conta e escolhe o que deseja:
+
+- **Agendar** — fluxo de 4 etapas: serviço → data/hora → dados pessoais → confirmação com "Adicionar ao calendário" (.ics / Web Share API)
+- **Verificar Agendamento** — informa WhatsApp e consulta horários futuros marcados
+- **Cancelar Agendamento** — informa WhatsApp, vê agendamentos futuros e cancela com confirmação inline
 
 **SEO**: og:title, og:description, og:image (logo da barbearia ou og-default.png), twitter:card
 **PWA**: manifest dinâmico por slug, tema âmbar, "Adicionar à tela inicial" no Android e iOS
@@ -43,12 +44,14 @@ Página pública de autoatendimento. O cliente acessa pelo link da barbearia e a
 
 ### Painel Admin (`/admin`)
 Acesso restrito ao e-mail definido em `ADMIN_EMAIL`:
-- Stats: total barbearias, em trial, expirado, planos pagos, MRR e ARR
-- Alerta automático de trials e assinaturas expirando em ≤ 7 dias
+- Stats: total barbearias, em trial, expirado, planos pagos, em carência, bloqueados, MRR e ARR
+- Alertas automáticos de trials e assinaturas expirando em ≤ 7 dias, carência e bloqueio total
 - Gráfico de crescimento mensal (recharts) e mix de planos (donut chart)
 - Exportação CSV da tabela filtrada
 - Edição de plano, trial, subscription_ends_at, subscription_period, grace_period_days e status ativo/inativo
-- Mutations via Server Actions com service role (sem exposição da chave no browser)
+- **Indicações**: tabela com indicador → indicado, plano do indicado, status (pendente / qualificada / bonificada) e data
+- **Concessão de bônus**: para indicações qualificadas, admin escolhe entre "mês grátis" (+30 dias na assinatura) ou "upgrade de plano" (muda o plano + +30 dias + marca `referral_bonus_ends_at`)
+- Mutations via Server Actions com service role (updatePlan, toggleActive, grantReferralBonus)
 
 ### Auth
 - Login, cadastro e recuperação de senha
@@ -74,17 +77,22 @@ Acesso restrito ao e-mail definido em `ADMIN_EMAIL`:
 
 - Opt-in por barbearia — barbeiro ativa e configura livremente
 - Configuração: número de visitas necessárias + descrição da recompensa
-- Progresso: calculado a partir de visitas desde o último resgate
+- Progresso: calculado a partir de visitas desde o último resgate (não zera o histórico total)
 - Resgate registrado pelo barbeiro com histórico completo
+- Progresso visível também no modal de perfil do cliente em `/dashboard/clientes`
 
 ---
 
 ## Sistema de Indicação
 
-- Cada barbearia recebe um `referral_code` único no cadastro
-- Barbeiro indicado informa o código no onboarding
-- Ao assinar um plano pago, o indicador ganha bônus de 1 mês grátis (aprovado pelo admin)
-- Painel de indicações visível em `/dashboard/planos`
+- Cada barbearia recebe um `referral_code` único gerado no onboarding
+- Barbeiro indicado informa o código no onboarding; registro `referrals` criado com `status = 'pending'`
+- Ao ter o plano alterado para Pro ou Premium pelo admin, a indicação vai automaticamente para `'qualified'`
+- Admin concede o bônus manualmente no painel `/admin`, com duas opções:
+  - **Mês grátis** — estende `subscription_ends_at` em +30 dias
+  - **Upgrade de plano** — muda o plano do indicador + estende sub + define `referral_bonus_ends_at`
+- Indicação passa para `'rewarded'` após bônus concedido
+- Painel de indicações enviadas visível em `/dashboard/planos`
 
 ---
 
@@ -95,34 +103,34 @@ BarberOS/
 ├── src/
 │   ├── app/
 │   │   ├── admin/
-│   │   │   ├── page.tsx           # Server: verifica admin + busca usuários
-│   │   │   ├── client.tsx         # Client: painel de gestão
-│   │   │   └── actions.ts         # Server Actions: updatePlan, toggleActive
+│   │   │   ├── page.tsx           # Server: verifica admin + busca barbearias e indicações
+│   │   │   ├── client.tsx         # Client: painel de gestão + seção de indicações + modal de bônus
+│   │   │   └── actions.ts         # Server Actions: updatePlan, toggleActive, grantReferralBonus
 │   │   ├── book/
 │   │   │   └── [slug]/
 │   │   │       ├── page.tsx       # Server: busca barbearia + serviços pelo slug
-│   │   │       └── client.tsx     # Client: fluxo de agendamento em 4 etapas
+│   │   │       └── client.tsx     # Client: menu (Agendar/Verificar/Cancelar) + fluxo 4 etapas
 │   │   ├── dashboard/
 │   │   │   ├── layout.tsx         # Proteção de rota + sidebar
 │   │   │   ├── page.tsx           # Visão geral com stats + banner de plano
 │   │   │   ├── agenda/            # page.tsx + client.tsx
 │   │   │   ├── clientes/          # page.tsx + client.tsx (+ loyalty data)
 │   │   │   ├── configuracoes/     # page.tsx + client.tsx
-│   │   │   ├── fidelidade/        # page.tsx + client.tsx  ← novo
+│   │   │   ├── fidelidade/        # page.tsx + client.tsx
 │   │   │   ├── planos/            # page.tsx + client.tsx + actions.ts
 │   │   │   ├── relatorios/        # page.tsx + client.tsx
 │   │   │   └── servicos/          # page.tsx + client.tsx
 │   │   ├── login/page.tsx
-│   │   ├── onboarding/page.tsx    # (+ campo código de indicação)
+│   │   ├── onboarding/page.tsx    # 3 passos + campo código de indicação
 │   │   └── reset-password/page.tsx
 │   ├── components/
-│   │   ├── layout/sidebar.tsx     # Nav responsiva (+ item Fidelidade)
+│   │   ├── layout/sidebar.tsx     # Nav responsiva com item Fidelidade
 │   │   └── ui/modal.tsx           # Modal reutilizável
 │   ├── lib/
 │   │   ├── supabase/              # client.ts + server.ts + admin.ts
 │   │   ├── plans.ts               # Planos + billing periods + helpers
 │   │   └── utils.ts               # cn()
-│   ├── types/database.ts          # Types + LoyaltyProgram, LoyaltyReward, Referral
+│   ├── types/database.ts          # Types: Barbershop, LoyaltyProgram, LoyaltyReward, Referral…
 │   └── middleware.ts              # Proteção de rotas
 ├── supabase/
 │   └── migrations/
@@ -144,16 +152,16 @@ BarberOS/
 
 | Tabela | Descrição |
 |---|---|
-| `barbershops` | Dados da barbearia (slug, horários, plano, assinatura, indicação) |
+| `barbershops` | Dados da barbearia (slug, horários, plano, assinatura, referral_code, referral_bonus_ends_at) |
 | `services` | Serviços oferecidos (preço, duração, categorias) |
-| `customers` | Clientes cadastrados (nome, telefone, visitas) |
+| `customers` | Clientes cadastrados (nome, telefone, total_visits) |
 | `appointments` | Agendamentos (status, fonte, horários) |
 | `blocked_slots` | Bloqueios de horário |
 | `bot_sessions` | Estado da conversa do bot WhatsApp |
 | `whatsapp_instances` | Instâncias Evolution API |
 | `loyalty_programs` | Configuração do programa de fidelidade por barbearia |
 | `loyalty_rewards` | Histórico de resgates de recompensas |
-| `referrals` | Rastreamento de indicações entre barbeiros |
+| `referrals` | Rastreamento de indicações (pending → qualified → rewarded) |
 
 ### View
 - `appointments_full` — JOIN de agendamentos com cliente e serviço
@@ -200,7 +208,7 @@ NEXT_PUBLIC_APP_URL=https://seu-dominio.vercel.app
 
 Execute as migrations no Supabase SQL Editor. Tabelas, views, functions e policies estão descritas em `Context/SUPABASE.md`.
 
-Para a migração de fidelidade e indicações, execute também:
+Para fidelidade e indicações, execute também:
 ```
 supabase/migrations/20260326_loyalty_and_referrals.sql
 ```
@@ -245,13 +253,27 @@ modulo/
 | `/dashboard/configuracoes` | Autenticado | Configurações da barbearia |
 | `/dashboard/relatorios` | Autenticado | Analytics (gateado por plano) |
 | `/dashboard/planos` | Autenticado | Tabela comparativa de planos + indicações |
-| `/admin` | Admin only | Gestão de usuários e planos |
+| `/admin` | Admin only | Gestão de usuários, planos e indicações |
 
 ---
 
 ## Próximos Passos
 
-- [ ] Deploy — Vercel (Next.js) + Render (Evolution API)
-- [ ] WhatsApp Bot — Evolution API + webhook Next.js (ver `Context/CHATBOT.md`)
-- [ ] Notificações de lembrete — cron Vercel + bot envia via Evolution API
-- [ ] Aprovação automática de indicações via webhook de pagamento
+- [ ] **Deploy** — Vercel (Next.js) + Railway ou Render (Evolution API bot)
+- [ ] **WhatsApp Bot** — integrar Evolution API com o webhook Next.js (ver `Context/CHATBOT.md`)
+- [ ] **Notificações de lembrete** — cron Vercel dispara lembretes via bot 24h antes do agendamento
+- [ ] **Gateway de pagamento** — integração com Asaas ou Stripe para cobrança automática de planos e renovação de assinaturas
+- [ ] **Aprovação automática de indicações** — webhook do gateway de pagamento qualifica e bonifica indicações sem intervenção manual
+
+---
+
+## Melhorias Futuras
+
+- [ ] **Múltiplos barbeiros por barbearia** — agenda compartilhada com atribuição de agendamento por profissional
+- [ ] **Cancelamento e reagendamento self-service** — cliente altera o próprio agendamento pelo Book dentro de uma janela de tempo configurável
+- [ ] **Lista de espera** — cliente entra na fila para um horário lotado e é notificado caso abra uma vaga
+- [ ] **Pacotes e combos** — venda de pacotes (ex.: 5 cortes com desconto) rastreados no perfil do cliente
+- [ ] **Notificações push via PWA** — alertar o barbeiro sobre novos agendamentos mesmo com o navegador fechado
+- [ ] **Exportação de indicações** — CSV da tabela de indicações no painel admin
+- [ ] **Relatórios avançados** — retenção de clientes, cohort de churn, serviços mais rentáveis
+- [ ] **App mobile nativo** — React Native ou wrapper PWA com notificações nativas

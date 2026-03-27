@@ -65,17 +65,17 @@ Functions: get_available_slots (única versão — não criar overloads!),
 - Configurações (dados da barbearia, upload de logo, preview do bot, horários, link do Book com compartilhamento)
 - Agenda (dia/semana/mês, criar/editar/cancelar agendamentos, bloqueio de horários, botão de refresh)
 - Agenda visão dia ordenada por horário (agendamentos + bloqueios mesclados)
-- BarberOS Book (/book/[slug]) — agendamento público em 4 etapas, slots sincronizados, "Adicionar ao calendário"
+- BarberOS Book (/book/[slug]) — menu inicial (Agendar / Verificar Agendamento / Cancelar Agendamento), agendamento em 4 etapas, consulta de horários por telefone, cancelamento com confirmação inline, "Adicionar ao calendário"
 - Book SEO — og:title, og:description, og:image (logo ou og-default.png), twitter:card
 - Book PWA — manifest.webmanifest dinâmico por slug, themeColor âmbar, appleWebApp
 - Rate limiting — 20 req/min por IP nas rotas /book/* (in-memory, sem dependência externa)
 - Relatórios (/dashboard/relatorios) — cards+delta, gráfico recharts, insights, CSV/PDF, gate por plano
 - Planos (/dashboard/planos) — tabela comparativa, banner de status, texto de vantagens dinâmico, código de indicação, bônus ativo
-- Painel Admin (/admin) — MRR/ARR, alerta trial expirando, gráfico de crescimento, mix de planos, CSV
+- Painel Admin (/admin) — MRR/ARR, alertas de trial/assinatura, gráficos, CSV, gestão de planos, seção de indicações (tabela referrer→referred + status) e concessão de bônus (mês grátis ou upgrade de plano)
 - Sistema de planos (lib/plans.ts) — free trial / pro / premium com feature gates + período de cobrança + carência
 - Supabase Storage — bucket `logos` para upload de logo por barbearia
 - **Programa de Fidelidade** (/dashboard/fidelidade) — configurável pelo barbeiro, progresso por cliente, histórico de resgates
-- **Sistema de Indicação** — código único por barbearia, registro de indicações, bônus de 1 mês ao indicador
+- **Sistema de Indicação** — código único por barbearia, registro de indicações (pending→qualified→rewarded), qualificação automática ao mudar plano para pago, bônus concedido pelo admin (mês grátis ou upgrade de plano por 30 dias)
 
 ## Planos
 - free  → trial por período definido pelo admin, acesso 100%, chatbot conforme admin
@@ -98,10 +98,11 @@ EVOLUTION_API_KEY=
 ```
 
 ## Próximos passos (MVP)
-1. Deploy (Vercel + Render para Evolution API)
+1. Deploy (Vercel + Railway/Render para Evolution API)
 2. WhatsApp Bot (Evolution API — ver CHATBOT.md para prompt completo de implementação)
-3. Notificações de lembrete (cron Vercel + bot)
-4. Aprovação automática de indicações (quando indicado assinar plano pago)
+3. Notificações de lembrete (cron Vercel + bot envia via Evolution API)
+4. Gateway de pagamento (Asaas/Stripe) para cobrança e renovação automática de planos
+5. Aprovação automática de indicações via webhook do gateway de pagamento
 
 ## Padrão de código usado
 - Server Components buscam dados e passam como props
